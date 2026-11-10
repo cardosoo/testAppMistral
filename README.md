@@ -10,7 +10,8 @@ avec une interface de chat simple (HTML/JS vanilla).
 
 ## Prérequis
 
-- Node.js 18+ (testé avec Node 22) et npm
+- Node.js 22.9+ (ou 20.18+), recommandé : Node 22, et npm
+  (le chargement de `.env` repose sur le flag natif `--env-file-if-exists`, d'où cette version minimale)
 
 ## Installation
 
@@ -28,8 +29,17 @@ cp .env.example .env
 [console.mistral.ai](https://console.mistral.ai)) :
 
 ```bash
-MISTRAL_API_KEY=votre_cle_api
+MISTRAL_API_KEY=mstrl_...
 ```
+
+Le fichier `.env` est **chargé automatiquement au démarrage** du serveur (flag
+`--env-file-if-exists=.env` dans les scripts npm) : aucun `export` n'est
+nécessaire. Points d'attention :
+
+- le fichier doit s'appeler exactement `.env` et se trouver à la racine du projet (à côté de `package.json`) ;
+- la ligne doit être exactement `MISTRAL_API_KEY=mstrl_...` : pas d'espace autour du `=`, pas de guillemets ;
+- après une modification de `.env`, **relancez** `npm run dev` (les variables d'environnement sont lues au démarrage du processus) ;
+- alternative sans fichier `.env` : `export MISTRAL_API_KEY=mstrl_...` dans le shell, ou `MISTRAL_API_KEY=mstrl_... npm run dev`.
 
 Le fichier `.env` est ignoré par git (voir `.gitignore`) : la clé ne doit jamais
 être commitée ni embarquée dans le frontend.

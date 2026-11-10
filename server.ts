@@ -11,7 +11,9 @@ if (!apiKey) {
   console.error(
     "Erreur : la variable d'environnement MISTRAL_API_KEY n'est pas définie."
   );
-  console.error("Copiez .env.example en .env et renseignez votre clé API Mistral.");
+  console.error(
+    "Le fichier .env (racine du projet) est charg\u00e9 automatiquement au d\u00e9marrage ; sinon d\u00e9finissez MISTRAL_API_KEY dans votre shell."
+  );
   process.exit(1);
 }
 

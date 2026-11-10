@@ -5,8 +5,8 @@
   "type": "module",
   "description": "App web minimale : chat avec l'API Mistral (SDK TypeScript officiel)",
   "scripts": {
-    "dev": "tsx watch server.ts",
-    "start": "tsx server.ts",
+    "dev": "tsx watch --env-file-if-exists=.env server.ts",
+    "start": "tsx --env-file-if-exists=.env server.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
