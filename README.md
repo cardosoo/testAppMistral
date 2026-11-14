@@ -240,7 +240,10 @@ de la réponse, et le renvoie dans `chart`. Le frontend le dessine en **SVG vani
 (dans `public/index.html`, aucune dépendance, labels échappés contre le XSS).
 
 - `type` : `"bar"` (histogramme) ou `"line"` (courbe) ;
-- la réponse `POST /api/chat` contient donc `{ reply, chart, steps, append }`.
+- la réponse `POST /api/chat` contient donc `{ reply, chart, steps, append }` ;
+- le graphique s'affiche en SVG responsive (fenêtre de chat élargie/hauteur 52vh) avec
+  boutons **💾 Télécharger SVG** / **💾 Télécharger PNG** (export local, le PNG est
+  rasterisé via canvas en 2x).
 
 Pour faire exécuter réellement du code (matplotlib...) et renvoyer une image PNG,
 il faudrait un vrai bac à sable serveur (conteneur isolé, sans réseau, limites
