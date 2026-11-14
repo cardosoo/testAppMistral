@@ -20,7 +20,7 @@ import {
   validateSql,
   SqlRejectedError,
 } from "../nl2sql.js";
-import { runChat, sanitizeMessages } from "../chat.js";
+import { parseChartBlock, runChat, sanitizeMessages } from "../chat.js";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra = ""): void {
@@ -200,10 +200,16 @@ if (sqlitePath && existsSync(sqlitePath)) {
             ],
           };
         }
-        // 2e tour : réponse finale en citant le résultat de l'outil
+        // 2e tour : réponse finale en citant le résultat de l'outil + bloc graphique
         return {
           choices: [
-            { message: { role: "assistant", content: "D'après la base sqlite, il y a 3 licences (résultat de la requête précédente)." } },
+            {
+              message: {
+                role: "assistant",
+                content:
+                  "D'après la base sqlite, il y a 3 licences (résultat de la requête précédente).\n```chart\n{\"type\":\"bar\",\"title\":\"Licences\",\"labels\":[\"L1-INFO\",\"L2-INFO\",\"L3-MIAGE\"],\"values\":[1,1,1]}\n```",
+              },
+            },
           ],
         };
       },
@@ -219,6 +225,19 @@ if (sqlitePath && existsSync(sqlitePath)) {
   check("runChat : 1 appel outil exécuté sur sqlite", r.steps.length === 1 && r.steps[0].database === "sqlite" && !r.steps[0].error, JSON.stringify(r.steps[0]).slice(0, 140));
   check("runChat : réponse finale cite le résultat de la requête", r.reply.includes("3"), r.reply.slice(0, 70));
   check("runChat : append = assistant(toolCalls) + tool + assistant(final)", r.append.length === 3, `append=${r.append.length}`);
+  check("runChat : bloc chart extrait et validé", r.chart !== null && r.chart.type === "bar" && r.chart.values.join() === "1,1,1", JSON.stringify(r.chart).slice(0, 100));
+  check("runChat : le bloc ```chart est retiré du texte de réponse", !r.reply.includes("```chart") && r.reply.includes("3 licences"), r.reply.slice(0, 60));
+
+  // parseChartBlock : cas nominaux et limites
+  const sample = 'Voici le graphique :\n```chart\n{"type":"bar","title":"H<eures","labels":["A","B"],"values":[10,20.5]}\n```\nFin.';
+  const p = parseChartBlock(sample);
+  check("parseChartBlock extrait et nettoie", p.chart?.type === "bar" && p.chart.values[1] === 20.5 && !p.text.includes("```chart") && p.text.includes("Voici"), p.text.slice(0, 40));
+  check("parseChartBlock sans bloc -> null", parseChartBlock("texte sans bloc").chart === null);
+  check("parseChartBlock : JSON invalide -> null", parseChartBlock("```chart\n{nope}\n```").chart === null);
+  check("parseChartBlock : longueurs labels/values différentes -> null", parseChartBlock('```chart\n{"type":"bar","labels":["a"],"values":[1,2]}\n```').chart === null);
+  check("parseChartBlock : valeur non numérique -> null", parseChartBlock('```chart\n{"type":"bar","labels":["a"],"values":["x"]}\n```').chart === null);
+  check("parseChartBlock : >100 points -> null", parseChartBlock('```chart\n{"type":"line","labels":[' + Array.from({ length: 101 }, (_, i) => `"l${i}"`).join(",") + '],"values":[' + Array.from({ length: 101 }, () => "1").join(",") + ']}\n```').chart === null);
+  check("parseChartBlock : type inconnu -> bar par défaut", parseChartBlock('```chart\n{"type":"pie","labels":["a"],"values":[1]}\n```').chart?.type === "bar");
 
   // L'historique rejoué (avec toolCalls + tool) doit être accepté : c'est le contexte du tour suivant
   const hist = [{ role: "user", content: "Combien de licences ?" }, ...r.append, { role: "user", content: "Et leurs parcours ?" }];

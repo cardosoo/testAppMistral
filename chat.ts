@@ -33,6 +33,46 @@ export interface ChatMessage {
 
 export class ChatBadRequestError extends Error {}
 
+/* ------------------------------------------------------------------ */
+/* Bloc graphique ```chart : spec JSON produite par le modèle,       */
+/* rendue côté navigateur en SVG (aucune exécution de code).          */
+/* ------------------------------------------------------------------ */
+
+export interface ChartSpec {
+  type: "bar" | "line";
+  title: string;
+  labels: string[];
+  values: number[];
+}
+
+function validateChart(raw: unknown): ChartSpec | null {
+  if (!isPlainObject(raw)) return null;
+  const type: "bar" | "line" = raw.type === "line" ? "line" : "bar";
+  if (!Array.isArray(raw.labels) || !Array.isArray(raw.values)) return null;
+  if (raw.labels.length === 0 || raw.labels.length > 100) return null;
+  if (raw.labels.length !== raw.values.length) return null;
+  const labels = raw.labels.map((l) => String(l).slice(0, 80));
+  const values = raw.values.map((v) => (typeof v === "number" && Number.isFinite(v) ? v : NaN));
+  if (values.some((v) => Number.isNaN(v))) return null;
+  return { type, title: String(raw.title ?? "").slice(0, 120), labels, values };
+}
+
+/**
+ * Extrait un bloc ```chart {json} ``` du texte du modèle.
+ * Retourne le graphique validé (ou null) et le texte nettoyé (bloc retiré).
+ */
+export function parseChartBlock(text: string): { chart: ChartSpec | null; text: string } {
+  const m = text.match(/```chart\s*\r?\n([\s\S]*?)```/i);
+  if (!m) return { chart: null, text };
+  let chart: ChartSpec | null = null;
+  try {
+    chart = validateChart(JSON.parse(m[1]));
+  } catch {
+    chart = null;
+  }
+  return { chart, text: text.replace(m[0], "").trim() };
+}
+
 const ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant", "tool"]);
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -99,10 +139,17 @@ export const CHAT_SYSTEM_PREFIX = [
   "utilise-les comme contexte (ex: après avoir trouvé des personnes, réutilise leurs identifiants dans la requête suivante).",
   "Quand tu as assez d'informations, réponds en français, en citant les chiffres exacts, sans appeler d'outil.",
   "Ne fabrique jamais de données : si une information n'est pas dans les résultats d'outils, dis-le.",
+  "",
+  "Graphiques : quand l'utilisateur demande un graphique (histogramme, courbe...), produis d'abord les données",
+  "(outil SQL si nécessaire), puis inclus dans ta réponse un bloc ```chart contenant UNIQUEMENT un JSON :",
+  '{"type":"bar"|"line","title":"...","labels":["..."],"values":[...]}',
+  "(labels et values de même longueur, valeurs numériques finies, max 100 points). Le graphique sera rendu",
+  "tel quel dans l'interface : ne produis pas de code Python/matplotlib, pas d'image, juste ce bloc JSON.",
 ].join("\n");
 
 export interface ChatResult {
   reply: string;
+  chart: ChartSpec | null;
   steps: AskStep[];
   /** Messages à ajouter à l'historique client (assistant avec toolCalls, tool, assistant final). */
   append: ChatMessage[];
@@ -131,8 +178,8 @@ export async function runChat(
   // Sans source NL2SQL configurée : chat simple, sans outils
   if (!nl2sql) {
     const completion = await mistral.chat.complete({ model: opts.model, messages: history as never });
-    const reply = contentToText(completion.choices?.[0]?.message?.content);
-    return { reply, steps: [], append: [{ role: "assistant", content: reply }] };
+    const { chart, text } = parseChartBlock(contentToText(completion.choices?.[0]?.message?.content));
+    return { reply: text, chart, steps: [], append: [{ role: "assistant", content: text }] };
   }
 
   const system = {
@@ -159,7 +206,8 @@ export async function runChat(
 
     const toolCalls = (message?.toolCalls ?? []) as ToolCallLike[];
     if (toolCalls.length === 0) {
-      return { reply: contentToText(message?.content) || "", steps, append };
+      const { chart, text } = parseChartBlock(contentToText(message?.content) || "");
+      return { reply: text, chart, steps, append };
     }
     for (const call of toolCalls) {
       const { step, payload } = await nl2sql.executeCall(call);
@@ -180,5 +228,6 @@ export async function runChat(
   });
   const fm = fin.choices?.[0]?.message as unknown as ChatMessage;
   append.push(fm);
-  return { reply: contentToText(fin.choices?.[0]?.message?.content) || "", steps, append };
+  const { chart, text } = parseChartBlock(contentToText(fin.choices?.[0]?.message?.content) || "");
+  return { reply: text, chart, steps, append };
 }

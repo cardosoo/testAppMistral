@@ -223,3 +223,27 @@ Sécurité identique à chaque appel (validation du SQL, read-only, plafonds).
 `/api/ask-db` reste disponible en one-shot (sans historique) pour le panneau dédié.
 Coût : l'historique complet est renvoyé à chaque tour (tokens) — le bouton
 « Nouvelle conversation » de l'UI remet l'historique à zéro.
+
+### Graphiques dans le chat (bloc `​```chart` + rendu SVG)
+
+Le chat peut afficher des graphiques **sans exécuter aucun code** : quand on lui
+demande un histogramme/courbe, le modèle produit les données (souvent via l'outil
+SQL) puis un bloc `​```chart` contenant un JSON :
+
+```
+{"type":"bar","title":"Heures par enseignant","labels":["Dupont","Martin"],"values":[30,24]}
+```
+
+Le serveur extrait et valide ce bloc (`chat.ts` → `parseChartBlock`, max 100 points,
+valeurs numériques finies, longueurs labels/values identiques), le retire du texte
+de la réponse, et le renvoie dans `chart`. Le frontend le dessine en **SVG vanilla**
+(dans `public/index.html`, aucune dépendance, labels échappés contre le XSS).
+
+- `type` : `"bar"` (histogramme) ou `"line"` (courbe) ;
+- la réponse `POST /api/chat` contient donc `{ reply, chart, steps, append }`.
+
+Pour faire exécuter réellement du code (matplotlib...) et renvoyer une image PNG,
+il faudrait un vrai bac à sable serveur (conteneur isolé, sans réseau, limites
+CPU/mémoire/timeout) ou l'outil `code_interpreter` de l'API Conversations de Mistral
+(mais vos données partiraient alors dans l'environnement d'exécution de Mistral —
+à réserver à des données agrégées/anonymisées).
