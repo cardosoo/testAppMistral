@@ -40,9 +40,26 @@ export class ChatBadRequestError extends Error {}
 
 export interface ChartSpec {
   type: "bar" | "line";
+  /** "vertical" (défaut) ou "horizontal" (barres horizontales, uniquement pour bar). */
+  orientation: "vertical" | "horizontal";
   title: string;
   labels: string[];
   values: number[];
+  /** Couleur des barres / de la courbe (hex, rgb(), hsl() ou nom CSS). */
+  color?: string;
+  /** Palette par barre (répétée en boucle). */
+  colors?: string[];
+}
+
+// Couleur CSS sûre : hex / rgb(a) / hsl(a) / nom simple (lettres uniquement).
+// Jamais de quotes, parenthèses exotiques ou < > -> impossible d'injecter du SVG.
+const COLOR_RE =
+  /^(#[0-9a-fA-F]{3,8}|rgba?\(\s*[\d.]+%?\s*(,\s*[\d.]+%?\s*){2,3}\)|hsla?\(\s*[\d.]+(?:deg)?\s*,\s*[\d.]+%\s*,\s*[\d.]+%\s*(,\s*[\d.]+%?\s*)?\)|[a-zA-Z]{3,20})$/;
+
+function cleanColor(c: unknown): string | undefined {
+  if (typeof c !== "string") return undefined;
+  const t = c.trim().slice(0, 40);
+  return COLOR_RE.test(t) ? t : undefined;
 }
 
 function validateChart(raw: unknown): ChartSpec | null {
@@ -54,7 +71,20 @@ function validateChart(raw: unknown): ChartSpec | null {
   const labels = raw.labels.map((l) => String(l).slice(0, 80));
   const values = raw.values.map((v) => (typeof v === "number" && Number.isFinite(v) ? v : NaN));
   if (values.some((v) => Number.isNaN(v))) return null;
-  return { type, title: String(raw.title ?? "").slice(0, 120), labels, values };
+  const out: ChartSpec = {
+    type,
+    orientation: type === "bar" && raw.orientation === "horizontal" ? "horizontal" : "vertical",
+    title: String(raw.title ?? "").slice(0, 120),
+    labels,
+    values,
+  };
+  const color = cleanColor(raw.color);
+  if (color) out.color = color;
+  if (Array.isArray(raw.colors)) {
+    const colors = raw.colors.map(cleanColor).filter((c): c is string => !!c).slice(0, 100);
+    if (colors.length) out.colors = colors;
+  }
+  return out;
 }
 
 /**
@@ -142,9 +172,12 @@ export const CHAT_SYSTEM_PREFIX = [
   "",
   "Graphiques : quand l'utilisateur demande un graphique (histogramme, courbe...), produis d'abord les données",
   "(outil SQL si nécessaire), puis inclus dans ta réponse un bloc ```chart contenant UNIQUEMENT un JSON :",
-  '{"type":"bar"|"line","title":"...","labels":["..."],"values":[...]}',
-  "(labels et values de même longueur, valeurs numériques finies, max 100 points). Le graphique sera rendu",
-  "tel quel dans l'interface : ne produis pas de code Python/matplotlib, pas d'image, juste ce bloc JSON.",
+  '{"type":"bar"|"line","orientation":"vertical"|"horizontal","title":"...","color":"#4f46e5","colors":["..."],"labels":["..."],"values":[...]}',
+  "- labels et values de même longueur, valeurs numériques finies, max 100 points ;",
+  '- "orientation":"horizontal" uniquement pour un histogramme (barres horizontales) ;',
+  '- "color" (couleur des barres/courbe : hex, rgb(), hsl() ou nom CSS comme "red") et/ou "colors" (palette par barre) sont optionnels ;',
+  "  ex. barres rouges horizontales : {\"type\":\"bar\",\"orientation\":\"horizontal\",\"color\":\"red\",...}",
+  "Le graphique sera rendu tel quel dans l'interface : ne produis pas de code Python/matplotlib, pas d'image, juste ce bloc JSON.",
 ].join("\n");
 
 export interface ChatResult {

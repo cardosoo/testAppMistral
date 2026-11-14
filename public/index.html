@@ -134,42 +134,73 @@
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     }
 
-    // Rendu SVG vanilla d'un ChartSpec { type: bar|line, title, labels, values }
+    // Rendu SVG vanilla d'un ChartSpec { type, orientation, title, labels, values, color, colors }
     // + boutons d'enregistrement local (SVG natif, PNG via canvas).
     function renderChart(chart) {
-      const W = 720, H = 340, padL = 52, padR = 14, padT = 40, padB = 60;
-      const iw = W - padL - padR, ih = H - padT - padB;
+      const horizontal = chart.type === "bar" && chart.orientation === "horizontal";
       const vals = chart.values, n = vals.length;
+      const W = 720;
+      const H = horizontal ? Math.max(300, 70 + n * 36) : 340;
+      const padT = 40, padB = horizontal ? 34 : 60;
+      const padL = horizontal ? 170 : 52, padR = horizontal ? 70 : 14;
+      const iw = W - padL - padR, ih = H - padT - padB;
       const maxV = Math.max(...vals, 0), minV = Math.min(0, ...vals);
       const span = maxV - minV || 1;
-      const x = (i) => padL + (iw * (i + 0.5)) / n;
-      const y = (v) => padT + ih * (1 - (v - minV) / span);
+      const colorOf = (i) =>
+        (chart.colors && chart.colors.length ? chart.colors[i % chart.colors.length] : chart.color) || "#4f46e5";
       const parts = [];
-      if (chart.title) parts.push(`<text x="${W / 2}" y="20" text-anchor="middle" font-size="14" font-weight="600">${esc(chart.title)}</text>`);
-      parts.push(`<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
-      parts.push(`<line x1="${padL}" y1="${padT + ih}" x2="${padL + iw}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
-      for (let t = 0; t <= 4; t++) {
-        const v = minV + (span * t) / 4, yy = y(v);
-        parts.push(`<line x1="${padL}" y1="${yy}" x2="${padL + iw}" y2="${yy}" stroke="#f0f0f2"/>`);
-        parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#52525b">${Math.round(v * 100) / 100}</text>`);
-      }
-      if (chart.type === "bar") {
-        const bw = Math.max(2, (iw / n) * 0.7);
+      if (chart.title) parts.push(`<text x="${W / 2}" y="22" text-anchor="middle" font-size="14" font-weight="600">${esc(chart.title)}</text>`);
+
+      if (horizontal) {
+        // Histogramme horizontal : catégories en Y (gauche), valeurs en X (bas)
+        const x = (v) => padL + iw * (v - minV) / span;
+        const y = (i) => padT + ih * (i + 0.5) / n;
+        const bh = Math.max(3, (ih / n) * 0.7);
+        const xZero = x(0);
+        parts.push(`<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        parts.push(`<line x1="${padL}" y1="${padT + ih}" x2="${padL + iw}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        for (let t = 0; t <= 4; t++) {
+          const v = minV + (span * t) / 4, xx = x(v);
+          parts.push(`<line x1="${xx}" y1="${padT}" x2="${xx}" y2="${padT + ih}" stroke="#f0f0f2"/>`);
+          parts.push(`<text x="${xx}" y="${padT + ih + 16}" text-anchor="middle" font-size="10" fill="#52525b">${Math.round(v * 100) / 100}</text>`);
+        }
         vals.forEach((v, i) => {
-          const top = y(Math.max(v, 0)), h = Math.abs(y(v) - y(0));
-          parts.push(`<rect x="${x(i) - bw / 2}" y="${top}" width="${bw}" height="${h}" fill="#4f46e5"><title>${esc(chart.labels[i])}: ${v}</title></rect>`);
-          if (n <= 20) parts.push(`<text x="${x(i)}" y="${top - 4}" text-anchor="middle" font-size="9" fill="#52525b">${v}</text>`);
+          const yy = y(i) - bh / 2;
+          const xx = Math.min(xZero, x(v)), w = Math.abs(x(v) - xZero);
+          parts.push(`<rect x="${xx}" y="${yy}" width="${w}" height="${bh}" fill="${colorOf(i)}"><title>${esc(chart.labels[i])}: ${v}</title></rect>`);
+          parts.push(`<text x="${padL - 6}" y="${y(i) + 4}" text-anchor="end" font-size="10" fill="#52525b">${esc(chart.labels[i]).slice(0, 22)}</text>`);
+          parts.push(`<text x="${Math.max(xZero, x(v)) + 5}" y="${y(i) + 4}" font-size="10" fill="#52525b">${v}</text>`);
         });
       } else {
-        const pts = vals.map((v, i) => `${x(i)},${y(v)}`).join(" ");
-        parts.push(`<polyline points="${pts}" fill="none" stroke="#4f46e5" stroke-width="2"/>`);
-        vals.forEach((v, i) => parts.push(`<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="#4f46e5"><title>${esc(chart.labels[i])}: ${v}</title></circle>`));
+        // Vertical : catégories en X (bas), valeurs en Y (gauche)
+        const x = (i) => padL + (iw * (i + 0.5)) / n;
+        const y = (v) => padT + ih * (1 - (v - minV) / span);
+        parts.push(`<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        parts.push(`<line x1="${padL}" y1="${padT + ih}" x2="${padL + iw}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        for (let t = 0; t <= 4; t++) {
+          const v = minV + (span * t) / 4, yy = y(v);
+          parts.push(`<line x1="${padL}" y1="${yy}" x2="${padL + iw}" y2="${yy}" stroke="#f0f0f2"/>`);
+          parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#52525b">${Math.round(v * 100) / 100}</text>`);
+        }
+        if (chart.type === "bar") {
+          const bw = Math.max(2, (iw / n) * 0.7);
+          vals.forEach((v, i) => {
+            const top = y(Math.max(v, 0)), h = Math.abs(y(v) - y(0));
+            parts.push(`<rect x="${x(i) - bw / 2}" y="${top}" width="${bw}" height="${h}" fill="${colorOf(i)}"><title>${esc(chart.labels[i])}: ${v}</title></rect>`);
+            if (n <= 20) parts.push(`<text x="${x(i)}" y="${top - 4}" text-anchor="middle" font-size="9" fill="#52525b">${v}</text>`);
+          });
+        } else {
+          const pts = vals.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+          const c = colorOf(0);
+          parts.push(`<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2"/>`);
+          vals.forEach((v, i) => parts.push(`<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${c}"><title>${esc(chart.labels[i])}: ${v}</title></circle>`));
+        }
+        const step = Math.ceil(n / 12);
+        chart.labels.forEach((l, i) => {
+          if (i % step !== 0 && i !== n - 1) return;
+          parts.push(`<text x="${x(i)}" y="${padT + ih + 14}" text-anchor="end" font-size="9" fill="#52525b" transform="rotate(-25 ${x(i)} ${padT + ih + 14})">${esc(l).slice(0, 12)}</text>`);
+        });
       }
-      const step = Math.ceil(n / 12);
-      chart.labels.forEach((l, i) => {
-        if (i % step !== 0 && i !== n - 1) return;
-        parts.push(`<text x="${x(i)}" y="${padT + ih + 14}" text-anchor="end" font-size="9" fill="#52525b" transform="rotate(-25 ${x(i)} ${padT + ih + 14})">${esc(l).slice(0, 12)}</text>`);
-      });
 
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", `0 0 ${W} ${H}`);

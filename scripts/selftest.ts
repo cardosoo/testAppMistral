@@ -239,6 +239,16 @@ if (sqlitePath && existsSync(sqlitePath)) {
   check("parseChartBlock : >100 points -> null", parseChartBlock('```chart\n{"type":"line","labels":[' + Array.from({ length: 101 }, (_, i) => `"l${i}"`).join(",") + '],"values":[' + Array.from({ length: 101 }, () => "1").join(",") + ']}\n```').chart === null);
   check("parseChartBlock : type inconnu -> bar par défaut", parseChartBlock('```chart\n{"type":"pie","labels":["a"],"values":[1]}\n```').chart?.type === "bar");
 
+  // Styles : orientation + couleurs
+  const styled = parseChartBlock('```chart\n{"type":"bar","orientation":"horizontal","color":"red","labels":["A","B"],"values":[3,7]}\n```');
+  check("chart : orientation horizontal conservée", styled.chart?.orientation === "horizontal", JSON.stringify(styled.chart?.orientation));
+  check("chart : couleur nommée conservée", styled.chart?.color === "red");
+  const hex = parseChartBlock('```chart\n{"type":"bar","colors":["#ff0000","#00ff00"],"labels":["A","B"],"values":[1,2]}\n```');
+  check("chart : palette colors conservée", hex.chart?.colors?.length === 2 && hex.chart.colors[0] === "#ff0000");
+  const injected = parseChartBlock('```chart\n{"type":"bar","color":"red\\"><script>alert(1)</script>","labels":["A"],"values":[1]}\n```');
+  check("chart : couleur dangereuse écartée (anti-injection SVG), graphique conservé", injected.chart !== null && injected.chart.color === undefined, `color=${injected.chart?.color}`);
+  check("chart : orientation horizontal ignorée pour une courbe", parseChartBlock('```chart\n{"type":"line","orientation":"horizontal","labels":["a"],"values":[1]}\n```').chart?.orientation === "vertical");
+
   // L'historique rejoué (avec toolCalls + tool) doit être accepté : c'est le contexte du tour suivant
   const hist = [{ role: "user", content: "Combien de licences ?" }, ...r.append, { role: "user", content: "Et leurs parcours ?" }];
   const s = sanitizeMessages(hist);

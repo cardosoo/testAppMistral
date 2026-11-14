@@ -240,6 +240,10 @@ de la réponse, et le renvoie dans `chart`. Le frontend le dessine en **SVG vani
 (dans `public/index.html`, aucune dépendance, labels échappés contre le XSS).
 
 - `type` : `"bar"` (histogramme) ou `"line"` (courbe) ;
+- champs de style optionnels : `"orientation": "horizontal"` (barres horizontales, bar uniquement),
+  `"color": "red"` ou `"#e11d48"` (couleur des barres/courbe), `"colors": ["#f00", "#0f0"]` (palette
+  par barre) — validés strictement côté serveur (hex/rgb/hsl/nom CSS uniquement, anti-injection SVG) ;
+  ex. « histogramme horizontal en rouge » → `{"type":"bar","orientation":"horizontal","color":"red",...}` ;
 - la réponse `POST /api/chat` contient donc `{ reply, chart, steps, append }` ;
 - le graphique s'affiche en SVG responsive (fenêtre de chat élargie/hauteur 52vh) avec
   boutons **💾 Télécharger SVG** / **💾 Télécharger PNG** (export local, le PNG est
