@@ -13,13 +13,14 @@ import { existsSync } from "node:fs";
 import { Pool } from "pg";
 import { DatabaseSync } from "node:sqlite";
 import {
+  createNl2Sql,
   createSqliteSource,
   executeReadonly,
   loadSchemaInfo,
   validateSql,
-  createPostgresSource,
   SqlRejectedError,
 } from "../nl2sql.js";
+import { runChat, sanitizeMessages } from "../chat.js";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra = ""): void {
@@ -161,6 +162,71 @@ if (sqlitePath && existsSync(sqlitePath)) {
   }
 } else {
   console.log("\n--- SQLITE_PATH non défini et pas de structure.sqlite3 : tests SQLite ignorés ---");
+}
+
+/* ---------------- Chat contextuel (runChat avec LLM mocké) ---------------- */
+if (sqlitePath && existsSync(sqlitePath)) {
+  console.log(`\n--- Chat contextuel NL2SQL (LLM mocké, source sqlite) ---`);
+  const src = createSqliteSource(sqlitePath, { name: "sqlite" });
+  let llmCalls = 0;
+  const fakeMistral: any = {
+    chat: {
+      complete: async () => {
+        llmCalls++;
+        if (llmCalls === 1) {
+          // 1er tour : le modèle demande une requête SQL
+          return {
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: null,
+                  toolCalls: [
+                    {
+                      id: "c1",
+                      type: "function",
+                      function: {
+                        name: "run_readonly_sql",
+                        arguments: JSON.stringify({
+                          database: "sqlite",
+                          sql: "SELECT count(*) AS n FROM licence",
+                          explanation: "compte les licences",
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          };
+        }
+        // 2e tour : réponse finale en citant le résultat de l'outil
+        return {
+          choices: [
+            { message: { role: "assistant", content: "D'après la base sqlite, il y a 3 licences (résultat de la requête précédente)." } },
+          ],
+        };
+      },
+    },
+  };
+  const nl2sql = createNl2Sql({
+    mistral: fakeMistral,
+    sources: [src],
+    fileConfig: null,
+    config: { model: "m", maxRows: 200, statementTimeoutMs: 5000, maxSampleBytes: 20000, maxToolRounds: 3 },
+  });
+  const r = await runChat(fakeMistral, nl2sql, [{ role: "user", content: "Combien de licences dans la structure ?" }], { model: "m", maxToolRounds: 3 });
+  check("runChat : 1 appel outil exécuté sur sqlite", r.steps.length === 1 && r.steps[0].database === "sqlite" && !r.steps[0].error, JSON.stringify(r.steps[0]).slice(0, 140));
+  check("runChat : réponse finale cite le résultat de la requête", r.reply.includes("3"), r.reply.slice(0, 70));
+  check("runChat : append = assistant(toolCalls) + tool + assistant(final)", r.append.length === 3, `append=${r.append.length}`);
+
+  // L'historique rejoué (avec toolCalls + tool) doit être accepté : c'est le contexte du tour suivant
+  const hist = [{ role: "user", content: "Combien de licences ?" }, ...r.append, { role: "user", content: "Et leurs parcours ?" }];
+  const s = sanitizeMessages(hist);
+  check("sanitizeMessages conserve l'historique avec toolCalls/tool (contexte)", s !== null && s.length === hist.length, `len=${s?.length}/${hist.length}`);
+  check("sanitizeMessages supprime un message tool orphelin", sanitizeMessages([{ role: "tool", content: "x", toolCallId: "zzz" }, { role: "user", content: "a" }])?.some((m) => m.role === "tool") === false);
+  check("sanitizeMessages refuse un rôle inconnu", sanitizeMessages([{ role: "hacker", content: "a" }]) === null);
+  check("sanitizeMessages refuse un corps invalide", sanitizeMessages("pas un tableau") === null && sanitizeMessages([]) === null);
 }
 
 console.log(failures === 0 ? "\n✅ TOUS LES TESTS PASSENT" : `\n❌ ${failures} ÉCHEC(S)`);

@@ -203,3 +203,23 @@ catalogue des UE).
   `*.sqlite3` est dans `.gitignore` (ne pas commiter vos vraies bases).
 - Note : `node:sqlite` est encore expérimental côté Node (warning au démarrage) ;
   aucun paquet natif à installer.
+
+### Chat contextuel avec accès aux bases (NL2SQL DANS le chat)
+
+Quand `DATABASE_URL`/`SQLITE_PATH` sont définis, `POST /api/chat` expose aussi
+l'outil `run_readonly_sql` au modèle : dans **une même conversation**, le chat peut
+interroger les bases **et réutiliser les résultats des tours précédents** (l'historique
+client conserve les messages `assistant` avec `toolCalls` et les messages `tool`).
+
+Exemple : « Trouve les personnes MCF de l'UFR » puis « Quels enseignements figurent
+dans leurs voeux ? » — la 2ᵉ question réutilise les identifiants trouvés à la 1ʳᵉ.
+
+Contrat API : requête `{ "messages": [...] }` → réponse `{ "reply", "steps", "append" }`
+- `reply` : réponse texte ; `steps` : détail des requêtes exécutées (source, SQL, lignes) ;
+- `append` : messages générés côté serveur à **remettre dans l'historique** au tour
+  suivant (c'est ce qui crée le contexte).
+
+Sécurité identique à chaque appel (validation du SQL, read-only, plafonds).
+`/api/ask-db` reste disponible en one-shot (sans historique) pour le panneau dédié.
+Coût : l'historique complet est renvoyé à chaque tour (tokens) — le bouton
+« Nouvelle conversation » de l'UI remet l'historique à zéro.

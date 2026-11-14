@@ -58,6 +58,12 @@ export interface AskDbResult {
   steps: AskStep[];
 }
 
+/** Appel d'outil renvoyé par le modèle (forme minimale utilisée ici). */
+export interface ToolCallLike {
+  id?: string;
+  function: { name: string; arguments: unknown };
+}
+
 export interface SchemaInfo {
   text: string;
   tables: string[];
@@ -534,6 +540,47 @@ export function createNl2Sql(deps: Nl2SqlDeps) {
     },
   };
 
+  /** Exécute un appel d'outil run_readonly_sql : valide puis exécute, et produit le payload renvoyé au LLM. */
+  async function executeCall(call: ToolCallLike): Promise<{ step: AskStep; payload: string }> {
+    const rawArgs = call.function.arguments;
+    const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+    const dbName = String((args as { database?: unknown })?.database ?? "");
+    const source = sourceByName.get(dbName);
+    const step: AskStep = {
+      database: dbName || "?",
+      sql: String((args as { sql?: unknown })?.sql ?? ""),
+      explanation: (args as { explanation?: string })?.explanation,
+      columns: [],
+      rows: [],
+      rowCount: 0,
+      truncated: false,
+    };
+    if (!source) {
+      step.error = `source inconnue "${dbName}" (disponibles : ${[...sourceByName.keys()].join(", ")})`;
+    } else {
+      try {
+        step.sql = await source.validate(step.sql);
+        const exec = await source.execute(step.sql, deps.config.maxRows, deps.config.statementTimeoutMs);
+        Object.assign(step, exec);
+      } catch (e) {
+        step.error =
+          e instanceof SqlRejectedError
+            ? `SQL refusé : ${e.message}`
+            : `erreur d'exécution : ${(e as Error).message}`;
+      }
+    }
+    const payload = JSON.stringify({
+      database: step.database,
+      sql: step.sql,
+      error: step.error,
+      columns: step.columns,
+      rowCount: step.rowCount,
+      truncated: step.truncated,
+      rows: step.rows,
+    }).slice(0, deps.config.maxSampleBytes);
+    return { step, payload };
+  }
+
   async function ask(question: string): Promise<AskDbResult> {
     const systemPrompt = await buildSystemPrompt();
     const messages: Record<string, unknown>[] = [
@@ -566,43 +613,8 @@ export function createNl2Sql(deps: Nl2SqlDeps) {
       }
 
       for (const call of toolCalls) {
-        const rawArgs = call.function.arguments;
-        const args = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
-        const dbName = String((args as { database?: unknown })?.database ?? "");
-        const source = sourceByName.get(dbName);
-        const step: AskStep = {
-          database: dbName || "?",
-          sql: String((args as { sql?: unknown })?.sql ?? ""),
-          explanation: (args as { explanation?: string })?.explanation,
-          columns: [],
-          rows: [],
-          rowCount: 0,
-          truncated: false,
-        };
+        const { step, payload } = await executeCall(call);
         steps.push(step);
-        if (!source) {
-          step.error = `source inconnue "${dbName}" (disponibles : ${[...sourceByName.keys()].join(", ")})`;
-        } else {
-          try {
-            step.sql = await source.validate(step.sql);
-            const exec = await source.execute(step.sql, deps.config.maxRows, deps.config.statementTimeoutMs);
-            Object.assign(step, exec);
-          } catch (e) {
-            step.error =
-              e instanceof SqlRejectedError
-                ? `SQL refusé : ${e.message}`
-                : `erreur d'exécution : ${(e as Error).message}`;
-          }
-        }
-        const payload = JSON.stringify({
-          database: step.database,
-          sql: step.sql,
-          error: step.error,
-          columns: step.columns,
-          rowCount: step.rowCount,
-          truncated: step.truncated,
-          rows: step.rows,
-        }).slice(0, deps.config.maxSampleBytes);
         messages.push({ role: "tool", toolCallId: call.id ?? `call-${steps.length}`, content: payload });
       }
     }
@@ -621,7 +633,7 @@ export function createNl2Sql(deps: Nl2SqlDeps) {
     };
   }
 
-  return { ask, buildSystemPrompt };
+  return { ask, buildSystemPrompt, sqlTool, executeCall };
 }
 
 export type Nl2Sql = ReturnType<typeof createNl2Sql>;

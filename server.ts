@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
 import { Pool } from "pg";
 import {
-  contentToText,
   createNl2Sql,
   createPostgresSource,
   createSqliteSource,
@@ -14,6 +13,7 @@ import {
   type DataSource,
   type Nl2Sql,
 } from "./nl2sql.js";
+import { ChatBadRequestError, runChat } from "./chat.js";
 
 const MODEL = "mistral-small-latest";
 const PORT = Number(process.env.PORT ?? 3000);
@@ -81,7 +81,7 @@ if (sources.length > 0) {
   });
   console.log(`NL2SQL activé, sources : ${sources.map((s) => `"${s.name}" (${s.label})`).join(", ")}`);
 } else {
-  console.log("NL2SQL désactivé (ni DATABASE_URL ni SQLITE_PATH) — seul POST /api/chat est actif");
+  console.log("NL2SQL désactivé (ni DATABASE_URL ni SQLITE_PATH) — /api/chat fonctionne sans accès aux bases");
 }
 
 const app = express();
@@ -90,55 +90,24 @@ app.use(express.json({ limit: "256kb" }));
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 app.use(express.static(publicDir));
 
-type Role = "system" | "user" | "assistant";
-interface ChatMessage {
-  role: Role;
-  content: string;
-}
-
-const ROLES: ReadonlySet<string> = new Set(["system", "user", "assistant"]);
-
-function sanitizeMessages(input: unknown): ChatMessage[] | null {
-  if (!Array.isArray(input) || input.length === 0 || input.length > 100) {
-    return null;
-  }
-  const messages: ChatMessage[] = [];
-  for (const item of input) {
-    if (
-      typeof item !== "object" ||
-      item === null ||
-      typeof (item as { role?: unknown }).role !== "string" ||
-      !ROLES.has((item as { role: string }).role) ||
-      typeof (item as { content?: unknown }).content !== "string" ||
-      (item as { content: string }).content.length > 8000
-    ) {
-      return null;
-    }
-    messages.push({
-      role: (item as { role: Role }).role,
-      content: (item as { content: string }).content,
-    });
-  }
-  return messages;
-}
-
+// Chat conversationnel. Si des sources NL2SQL sont configurées, le modèle a
+// aussi accès à l'outil run_readonly_sql : il peut interroger les bases DANS la
+// conversation, avec l'historique (dont résultats de requêtes précédentes) comme
+// contexte. Réponse : { reply, steps, append } — "append" = messages à rejouer
+// dans l'historique client (assistant avec toolCalls, messages tool, réponse finale).
 app.post("/api/chat", async (req, res) => {
-  const messages = sanitizeMessages(req.body?.messages);
-  if (!messages) {
-    return res
-      .status(400)
-      .json({ error: "Corps attendu : { messages: [{ role, content }] }" });
-  }
-
   try {
-    const completion = await client.chat.complete({ model: MODEL, messages });
-    const reply = contentToText(completion.choices?.[0]?.message?.content);
-    return res.json({ reply });
-  } catch (error) {
-    console.error("Erreur API Mistral :", error);
-    return res
-      .status(502)
-      .json({ error: "Échec de l'appel à l'API Mistral." });
+    const result = await runChat(client, nl2sql, req.body?.messages, {
+      model: MODEL,
+      maxToolRounds: Number(process.env.NL2SQL_MAX_TOOL_ROUNDS ?? 4),
+    });
+    return res.json(result);
+  } catch (e) {
+    if (e instanceof ChatBadRequestError) {
+      return res.status(400).json({ error: e.message });
+    }
+    console.error("Erreur API Mistral :", e);
+    return res.status(502).json({ error: "Échec de l'appel à l'API Mistral." });
   }
 });
 

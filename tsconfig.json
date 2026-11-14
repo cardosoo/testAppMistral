@@ -10,5 +10,5 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["server.ts", "nl2sql.ts", "scripts/**/*.ts"]
+  "include": ["server.ts", "nl2sql.ts", "chat.ts", "scripts/**/*.ts"]
 }

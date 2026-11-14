@@ -91,10 +91,10 @@
     <h1>Chat Mistral (mistral-small-latest) + NL2SQL</h1>
 
     <section>
-      <h2>💬 Chat libre</h2>
+      <h2>💬 Chat <button id="reset" type="button" style="float:right;font-size:0.75rem;padding:0.25rem 0.6rem;">Nouvelle conversation</button></h2>
       <div id="messages"></div>
       <form id="form">
-        <input id="input" type="text" placeholder="Écrivez votre message…" autocomplete="off" required />
+        <input id="input" type="text" placeholder="Écrivez votre message… (le chat peut interroger les bases si elles sont configurées)" autocomplete="off" required />
         <button id="send" type="submit">Envoyer</button>
       </form>
     </section>
@@ -113,12 +113,13 @@
   </main>
 
   <script>
-    /* ---------- Chat libre (POST /api/chat) ---------- */
+    /* ---------- Chat contextuel (POST /api/chat, outils NL2SQL si configurés) ---------- */
     const messagesEl = document.getElementById("messages");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const sendBtn = document.getElementById("send");
-    const history = [];
+    const resetBtn = document.getElementById("reset");
+    const history = []; // historique complet : user, assistant (avec toolCalls), tool
 
     function addMessage(role, text) {
       const div = document.createElement("div");
@@ -128,6 +129,48 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return div;
     }
+
+    function renderSteps(steps) {
+      const det = document.createElement("details");
+      det.style.marginTop = "0.4rem";
+      const sum = document.createElement("summary");
+      sum.textContent = `🗄️ ${steps.length} requête(s) exécutée(s) pendant ce tour`;
+      det.appendChild(sum);
+      steps.forEach((s, i) => {
+        const d = document.createElement("details");
+        const s2 = document.createElement("summary");
+        s2.textContent = `Étape ${i + 1} — source « ${s.database} »${s.error ? " ⚠️ " + s.error : ""}`;
+        d.appendChild(s2);
+        const pre = document.createElement("pre");
+        pre.style.cssText = "background:#18181b;color:#e4e4e7;padding:0.4rem;border-radius:0.4rem;overflow-x:auto;font-size:0.72rem;";
+        pre.textContent = s.sql;
+        d.appendChild(pre);
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = s.error
+          ? s.error
+          : `${s.rowCount} ligne(s)${s.truncated ? " (tronqué)" : ""}${s.explanation ? " — " + s.explanation : ""}`;
+        d.appendChild(meta);
+        if (!s.error && s.columns.length && s.rows.length) {
+          const table = document.createElement("table");
+          const thead = "<tr>" + s.columns.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+          const tbody = s.rows
+            .slice(0, 30)
+            .map((r) => "<tr>" + s.columns.map((c) => `<td>${r[c] ?? ""}</td>`).join("") + "</tr>")
+            .join("");
+          table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+          d.appendChild(table);
+        }
+        det.appendChild(d);
+      });
+      return det;
+    }
+
+    resetBtn.addEventListener("click", () => {
+      history.length = 0;
+      messagesEl.innerHTML = "";
+      input.focus();
+    });
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -146,8 +189,12 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Erreur serveur");
-        pending.textContent = data.reply;
-        history.push({ role: "assistant", content: data.reply });
+        pending.textContent = data.reply || "(réponse vide)";
+        if (Array.isArray(data.steps) && data.steps.length) pending.appendChild(renderSteps(data.steps));
+        // On rejoue dans l'historique les messages générés côté serveur (toolCalls, tool, réponse)
+        // pour que le prochain tour ait le contexte complet, y compris les résultats des requêtes.
+        if (Array.isArray(data.append) && data.append.length) history.push(...data.append);
+        else history.push({ role: "assistant", content: data.reply });
       } catch (err) {
         pending.className = "msg error";
         pending.textContent = err.message;
