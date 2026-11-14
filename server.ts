@@ -1,4 +1,5 @@
 import express from "express";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
@@ -6,8 +7,11 @@ import { Pool } from "pg";
 import {
   contentToText,
   createNl2Sql,
+  createPostgresSource,
+  createSqliteSource,
   loadFileConfig,
   SqlRejectedError,
+  type DataSource,
   type Nl2Sql,
 } from "./nl2sql.js";
 
@@ -27,12 +31,35 @@ if (!apiKey) {
 
 const client = new Mistral({ apiKey });
 
-// NL2SQL (optionnel) : actif uniquement si DATABASE_URL pointe vers un rôle
-// PostgreSQL strictement read-only (voir db/ et README).
+// NL2SQL (optionnel) : actif si au moins une source est configurée :
+//  - PostgreSQL via DATABASE_URL (rôle strictement read-only, voir db/ et README)
+//  - SQLite via SQLITE_PATH (défaut : ./structure.sqlite3 s'il existe)
+const sources: DataSource[] = [];
+
 const databaseUrl = process.env.DATABASE_URL;
-let nl2sql: Nl2Sql | null = null;
 if (databaseUrl) {
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+  sources.push(
+    createPostgresSource(pool, {
+      name: process.env.NL2SQL_PG_NAME ?? "postgres",
+      schemaName: process.env.NL2SQL_SCHEMA ?? "public",
+      allowedTables: process.env.NL2SQL_ALLOWED_TABLES?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    })
+  );
+}
+
+const sqlitePath =
+  process.env.SQLITE_PATH ?? (existsSync("structure.sqlite3") ? "structure.sqlite3" : undefined);
+if (sqlitePath && existsSync(sqlitePath)) {
+  sources.push(createSqliteSource(sqlitePath, { name: process.env.SQLITE_NAME ?? "sqlite" }));
+} else if (process.env.SQLITE_PATH) {
+  console.warn(`SQLITE_PATH=${process.env.SQLITE_PATH} introuvable — source sqlite ignorée`);
+}
+
+let nl2sql: Nl2Sql | null = null;
+if (sources.length > 0) {
   const fileConfig = loadFileConfig(process.env.NL2SQL_CONFIG ?? "nl2sql.config.json");
   if (fileConfig) {
     console.log(
@@ -42,23 +69,19 @@ if (databaseUrl) {
   }
   nl2sql = createNl2Sql({
     mistral: client,
-    pool,
+    sources,
     fileConfig,
     config: {
-      databaseUrl,
-      schemaName: process.env.NL2SQL_SCHEMA ?? "public",
+      model: process.env.NL2SQL_MODEL ?? MODEL,
       maxRows: Number(process.env.NL2SQL_MAX_ROWS ?? 200),
       statementTimeoutMs: Number(process.env.NL2SQL_TIMEOUT_MS ?? 5000),
-      model: process.env.NL2SQL_MODEL ?? MODEL,
       maxSampleBytes: Number(process.env.NL2SQL_MAX_SAMPLE_BYTES ?? 20000),
-      allowedTables: process.env.NL2SQL_ALLOWED_TABLES?.split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
+      maxToolRounds: Number(process.env.NL2SQL_MAX_TOOL_ROUNDS ?? 4),
     },
   });
-  console.log("NL2SQL activé (schéma PostgreSQL interrogable via POST /api/ask-db)");
+  console.log(`NL2SQL activé, sources : ${sources.map((s) => `"${s.name}" (${s.label})`).join(", ")}`);
 } else {
-  console.log("NL2SQL désactivé (DATABASE_URL non défini) — seul POST /api/chat est actif");
+  console.log("NL2SQL désactivé (ni DATABASE_URL ni SQLITE_PATH) — seul POST /api/chat est actif");
 }
 
 const app = express();
@@ -130,7 +153,7 @@ app.post("/api/ask-db", async (req, res) => {
   if (!nl2sql) {
     return res.status(503).json({
       error:
-        "NL2SQL non configuré : définissez DATABASE_URL (rôle PostgreSQL read-only) dans .env.",
+        "NL2SQL non configuré : définissez DATABASE_URL (rôle PostgreSQL read-only) et/ou SQLITE_PATH (fichier .sqlite3) dans .env.",
     });
   }
   try {

@@ -107,12 +107,7 @@
       </form>
       <div id="db-result" hidden>
         <div id="db-answer"></div>
-        <details id="db-details">
-          <summary>Requête SQL générée + résultats bruts</summary>
-          <pre id="db-sql"></pre>
-          <div class="meta" id="db-meta"></div>
-          <table id="db-table"></table>
-        </details>
+        <div id="db-steps"></div>
       </div>
     </section>
   </main>
@@ -169,9 +164,19 @@
     const dbSend = document.getElementById("db-send");
     const dbResult = document.getElementById("db-result");
     const dbAnswer = document.getElementById("db-answer");
-    const dbSql = document.getElementById("db-sql");
-    const dbMeta = document.getElementById("db-meta");
-    const dbTable = document.getElementById("db-table");
+    const dbSteps = document.getElementById("db-steps");
+
+    function renderStepTable(step) {
+      if (!step.columns.length || !step.rows.length) return null;
+      const table = document.createElement("table");
+      const thead = "<tr>" + step.columns.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+      const tbody = step.rows
+        .slice(0, 50)
+        .map((r) => "<tr>" + step.columns.map((c) => `<td>${r[c] ?? ""}</td>`).join("") + "</tr>")
+        .join("");
+      table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+      return table;
+    }
 
     dbForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -180,10 +185,8 @@
       dbSend.disabled = true;
       dbResult.hidden = false;
       dbAnswer.className = "";
-      dbAnswer.textContent = "Interrogation de la base en cours…";
-      dbTable.innerHTML = "";
-      dbSql.textContent = "";
-      dbMeta.textContent = "";
+      dbAnswer.textContent = "Interrogation des bases en cours…";
+      dbSteps.innerHTML = "";
       try {
         const res = await fetch("/api/ask-db", {
           method: "POST",
@@ -193,20 +196,29 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Erreur serveur");
         dbAnswer.textContent = data.answer;
-        if (data.sql) {
-          dbSql.textContent = data.sql;
-          dbMeta.textContent =
-            `${data.rowCount} ligne(s)${data.truncated ? " (tronqué)" : ""} — ${data.explanation || ""}`;
-          if (data.columns.length && data.rows.length) {
-            const thead = "<tr>" + data.columns.map((c) => `<th>${c}</th>`).join("") + "</tr>";
-            const tbody = data.rows
-              .slice(0, 50)
-              .map((r) => "<tr>" + data.columns.map((c) => `<td>${r[c] ?? ""}</td>`).join("") + "</tr>")
-              .join("");
-            dbTable.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
-          }
-        } else {
-          dbSql.textContent = "(aucune requête SQL — réponse directe du modèle)";
+        for (const [i, step] of (data.steps || []).entries()) {
+          const d = document.createElement("details");
+          const sum = document.createElement("summary");
+          sum.textContent = `Étape ${i + 1} — source « ${step.database} »${step.error ? " ⚠️ " + step.error : ""}`;
+          d.appendChild(sum);
+          const pre = document.createElement("pre");
+          pre.textContent = step.sql;
+          d.appendChild(pre);
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = step.error
+            ? step.error
+            : `${step.rowCount} ligne(s)${step.truncated ? " (tronqué)" : ""}${step.explanation ? " — " + step.explanation : ""}`;
+          d.appendChild(meta);
+          const table = renderStepTable(step);
+          if (table) d.appendChild(table);
+          dbSteps.appendChild(d);
+        }
+        if (!data.steps || data.steps.length === 0) {
+          const p = document.createElement("div");
+          p.className = "meta";
+          p.textContent = "(aucune requête SQL — réponse directe du modèle)";
+          dbSteps.appendChild(p);
         }
       } catch (err) {
         dbAnswer.className = "error";

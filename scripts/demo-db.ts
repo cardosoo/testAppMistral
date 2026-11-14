@@ -7,9 +7,10 @@
  * Puis configurez .env avec l'URL affichée (DATABASE_URL=...) et lancez `npm run dev`.
  */
 import EmbeddedPostgres from "embedded-postgres";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const port = Number(process.env.PGPORT ?? 5433);
@@ -61,11 +62,58 @@ await demo.connect();
 await demo.query(readFileSync(path.join(root, "db", "01-demo-schema.sql"), "utf8"));
 await demo.end();
 
-console.log("\n✅ Base de démo prête (rôle chatbot_read strictement read-only).");
+// 3) Base SQLite de démo : structure.sqlite3 (structure des enseignements de l'établissement)
+const sqliteFile = path.join(root, "structure.sqlite3");
+try {
+  unlinkSync(sqliteFile);
+} catch {
+  /* n'existait pas */
+}
+const lite = new DatabaseSync(sqliteFile);
+lite.exec(`
+CREATE TABLE licence (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  intitule TEXT NOT NULL
+);
+CREATE TABLE parcours (
+  id INTEGER PRIMARY KEY,
+  licence_id INTEGER NOT NULL REFERENCES licence(id),
+  code TEXT NOT NULL,
+  intitule TEXT NOT NULL
+);
+CREATE TABLE ue_structure (
+  id INTEGER PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,          -- ex: INF101 (pont avec ue.code côté PostgreSQL)
+  intitule TEXT NOT NULL,
+  semestre TEXT NOT NULL,             -- S1, S2...
+  ects INTEGER NOT NULL,
+  licence_id INTEGER NOT NULL REFERENCES licence(id)
+);
+INSERT INTO licence (code, intitule) VALUES
+  ('L1-INFO', 'Licence 1 Informatique'),
+  ('L2-INFO', 'Licence 2 Informatique'),
+  ('L3-MIAGE', 'Licence 3 MIAGE');
+INSERT INTO parcours (licence_id, code, intitule) VALUES
+  (1, 'L1-INFO', 'Licence 1 Informatique'),
+  (2, 'L2-INFO', 'Licence 2 Informatique');
+INSERT INTO ue_structure (code, intitule, semestre, ects, licence_id) VALUES
+  ('INF101', 'Bases de données', 'S1', 6, 1),
+  ('MAT101', 'Mathématiques pour l''informatique', 'S1', 6, 1),
+  ('PHY101', 'Physique des capteurs', 'S1', 4, 1),
+  ('INF201', 'Algorithmique avancée', 'S2', 6, 2),
+  ('STA201', 'Statistiques appliquées', 'S2', 5, 2),
+  ('INF301', 'Projet tutoré', 'S3', 4, 3);
+`);
+lite.close();
+console.log("Base SQLite de démo créée : structure.sqlite3 (tables licence, parcours, ue_structure)");
+
+console.log("\n✅ Bases de démo prêtes (PostgreSQL read-only + SQLite structure.sqlite3).");
 console.log(`   admin  : postgres://postgres:postgres@localhost:${port}/postgres`);
 console.log(`   NL2SQL : postgres://chatbot_read:chatbot_read_demo@localhost:${port}/chatbot_demo`);
 console.log("\nAjoutez dans .env :");
 console.log(`   DATABASE_URL=postgres://chatbot_read:chatbot_read_demo@localhost:${port}/chatbot_demo`);
+console.log(`   SQLITE_PATH=structure.sqlite3        # sera détecté automatiquement de toute façon`);
 console.log("\nDans un autre terminal :  npm run selftest  puis  npm run dev");
 console.log("(Ctrl+C pour arrêter la base)\n");
 

@@ -173,4 +173,33 @@ Le schéma exposé au LLM est lu dans `pg_catalog` (tables, colonnes, commentair
    chaque table métier, quelles jointures utiliser, et donnez 2–3 exemples de vos
    questions habituelles. Réduisez aussi le bruit avec `NL2SQL_ALLOWED_TABLES`.
 
-Sans `DATABASE_URL`, `/api/ask-db` renvoie 503 et seul le chat libre fonctionne.
+Sans aucune source configurée (`DATABASE_URL` et/ou `SQLITE_PATH`), `/api/ask-db`
+renvoie 503 et seul le chat libre fonctionne.
+
+### Multi-sources : PostgreSQL + SQLite (croiser les requêtes)
+
+Le chat peut interroger **plusieurs bases en même temps**. Par exemple une base
+PostgreSQL (données de l'UFR : voeux, personnes, enseignements) et un fichier
+**SQLite** `structure.sqlite3` (référentiel de l'établissement : licences, parcours,
+catalogue des UE).
+
+- Configurez la source SQLite via `SQLITE_PATH=structure.sqlite3` (détectée
+  automatiquement si le fichier `structure.sqlite3` est à la racine du projet) ;
+  `SQLITE_NAME=structure` change le nom vu par le LLM.
+- `npm run demo:db` crée aussi un `structure.sqlite3` de démo (tables `licence`,
+  `parcours`, `ue_structure`, avec des codes UE qui pontent vers la démo PostgreSQL).
+- **Pas de jointure cross-DB en SQL** (PostgreSQL et SQLite ne se joignent pas) :
+  l'orchestrateur enchaîne un appel d'outil par source (`run_readonly_sql` avec le
+  paramètre `database`), renvoie chaque résultat au LLM, qui poursuit puis
+  synthétise. Le nombre de rounds est plafonné (`NL2SQL_MAX_TOOL_ROUNDS`, défaut 4).
+- Exemple de question croisée : « Quels voeux concernent les UE de la licence
+  L1-INFO ? » → 1) `sqlite` : codes des UE de L1-INFO ; 2) `postgres` : voeux sur ces codes.
+- Le « pont » entre bases se déclare dans `nl2sql.config.json` (clé `sources`) :
+  ex. `ue_structure.code` (sqlite) = `ue.code` (postgres).
+- SQLite n'a pas de `COMMENT ON` : décrivez ses tables dans la section
+  `"sources": { "sqlite": { ... } }` du fichier de config.
+- Sécurité SQLite : fichier ouvert en **readOnly** + `PRAGMA query_only = ON` ;
+  même validation SQL (SELECT seul, whitelist de tables, plafond de lignes).
+  `*.sqlite3` est dans `.gitignore` (ne pas commiter vos vraies bases).
+- Note : `node:sqlite` est encore expérimental côté Node (warning au démarrage) ;
+  aucun paquet natif à installer.
