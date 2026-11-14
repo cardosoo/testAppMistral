@@ -1,0 +1,43 @@
+{
+  "databaseDescription": "Application de gestion des enseignements d'une UFR : personnes, UE, enseignements (séances), salles, semestres, et voeux des personnes sur les enseignements.",
+  "joinPaths": [
+    "voeux.personne_id -> personne.id",
+    "voeux.enseignement_id -> enseignement.id",
+    "enseignement.ue_id -> ue.id"
+  ],
+  "tables": {
+    "voeux": {
+      "description": "Voeux (souhaits) des personnes : UNE LIGNE = une personne qui souhaite participer à un enseignement. Table CENTRALE pour relier une personne à ses enseignements.",
+      "aliases": ["voeux", "souhaits", "demandes", "wishlist"],
+      "columns": {
+        "personne_id": "personne exprimant le voeu",
+        "enseignement_id": "enseignement concerné par le voeu"
+      },
+      "joins": [
+        "Pour savoir à quels enseignements participe une personne : JOIN personne ON personne.id = voeux.personne_id puis JOIN enseignement ON enseignement.id = voeux.enseignement_id"
+      ]
+    },
+    "personne": {
+      "description": "Personnes de l'UFR (enseignants, étudiants...)",
+      "columns": { "nom": "nom de famille", "prenom": "prénom" }
+    },
+    "enseignement": {
+      "description": "Enseignements (séances) dispensés",
+      "aliases": ["enseignements", "cours", "séances"]
+    }
+  },
+  "rules": [
+    "Pour toute question reliant une personne à ses enseignements, passer par la table voeux (ne jamais joindre personne et enseignement directement).",
+    "Utiliser ILIKE '%...%' pour les recherches de noms partiels (ex: cardoso)."
+  ],
+  "examples": [
+    {
+      "question": "À quels enseignements participe cardoso ?",
+      "sql": "SELECT e.id, e.intitule FROM enseignement e JOIN voeux v ON v.enseignement_id = e.id JOIN personne p ON p.id = v.personne_id WHERE p.nom ILIKE '%cardoso%'"
+    },
+    {
+      "question": "Combien de voeux au total ?",
+      "sql": "SELECT count(*) AS nb_voeux FROM voeux"
+    }
+  ]
+}

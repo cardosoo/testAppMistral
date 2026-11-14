@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { Pool } from "pg";
 import NodeSqlParser from "node-sql-parser";
 import type { Mistral } from "@mistralai/mistralai";
@@ -42,6 +44,80 @@ export interface SchemaInfo {
 }
 
 export class SqlRejectedError extends Error {}
+
+/* ------------------------------------------------------------------ */
+/* Fichier de configuration métier (nl2sql.config.json)               */
+/*                                                                    */
+/* En complément des COMMENT ON PostgreSQL (lus via pg_catalog), ce   */
+/* fichier décrit le sens métier des tables, le vocabulaire, les      */
+/* chemins de jointure et des exemples question -> SQL (few-shot).    */
+/* ------------------------------------------------------------------ */
+
+export interface Nl2SqlFileConfig {
+  databaseDescription?: string;
+  joinPaths?: string[];
+  tables?: Record<
+    string,
+    {
+      description?: string;
+      aliases?: string[];
+      columns?: Record<string, string>;
+      joins?: string[];
+    }
+  >;
+  rules?: string[];
+  examples?: { question: string; sql: string }[];
+}
+
+/** Charge le fichier de config JSON (chemin absolu ou relatif au cwd). Retourne null s'il n'existe pas. */
+export function loadFileConfig(configPath?: string): Nl2SqlFileConfig | null {
+  const p = path.resolve(configPath ?? "nl2sql.config.json");
+  if (!existsSync(p)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(p, "utf8")) as Nl2SqlFileConfig;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("le JSON racine doit être un objet");
+    }
+    return parsed;
+  } catch (e) {
+    console.warn(`[nl2sql] config ${p} illisible, ignorée : ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** Section « description métier » ajoutée au prompt système. */
+export function buildConfigSection(fc: Nl2SqlFileConfig | null): string {
+  if (!fc) return "";
+  const lines: string[] = ["", "=== Description métier (fichier nl2sql.config.json) ==="];
+  if (fc.databaseDescription) lines.push(`Base : ${fc.databaseDescription}`);
+  if (fc.joinPaths?.length) {
+    lines.push("", "Chemins de jointure recommandés :");
+    for (const j of fc.joinPaths) lines.push(`  - ${j}`);
+  }
+  if (fc.tables) {
+    for (const [t, td] of Object.entries(fc.tables)) {
+      lines.push("", `Table "${t}"${td.description ? ` : ${td.description}` : ""}`);
+      if (td.aliases?.length) lines.push(`  - mots-clés/alias : ${td.aliases.join(", ")}`);
+      if (td.columns) {
+        for (const [c, d] of Object.entries(td.columns)) lines.push(`  - ${c} : ${d}`);
+      }
+      if (td.joins?.length) for (const j of td.joins) lines.push(`  - jointure : ${j}`);
+    }
+  }
+  if (fc.rules?.length) {
+    lines.push("", "Règles métier :");
+    for (const r of fc.rules) lines.push(`  - ${r}`);
+  }
+  return lines.join("\n");
+}
+
+/** Bloc d'exemples few-shot (question -> SQL) ajouté au prompt système. */
+export function buildExamplesBlock(fc: Nl2SqlFileConfig | null): string {
+  if (!fc?.examples?.length) return "";
+  const lines = ["", "=== Exemples (question -> SQL attendu) ==="];
+  for (const e of fc.examples) lines.push(`Q: ${e.question}\nSQL: ${e.sql}`);
+  return lines.join("\n");
+}
 
 /** Extrait le texte d'un contenu de message Mistral (string ou chunks). */
 export function contentToText(content: unknown): string {
@@ -263,6 +339,7 @@ export interface Nl2SqlDeps {
   mistral: Mistral;
   pool: Pool;
   config: Nl2SqlConfig;
+  fileConfig?: Nl2SqlFileConfig | null;
 }
 
 export function createNl2Sql(deps: Nl2SqlDeps) {
@@ -300,18 +377,21 @@ export function createNl2Sql(deps: Nl2SqlDeps) {
     const schema = await ensureSchema();
 
     const systemPrompt = [
-      "Tu es un assistant NL2SQL pour une application de gestion des enseignements d'une UFR.",
+      "Tu es un assistant NL2SQL pour interroger une base PostgreSQL en lecture seule.",
       "Tu traduis la question de l'utilisateur en UNE requête SQL SELECT PostgreSQL, exécutée ensuite",
       "en lecture seule via l'outil run_readonly_sql.",
       "",
       "Règles strictes :",
       "- une seule instruction SELECT ; jamais de INSERT/UPDATE/DELETE/DDL ; pas de SELECT INTO ;",
       "- uniquement les tables du schéma ci-dessous (les CTE WITH sont autorisées) ;",
-      "- joins possibles via les clés étrangères listées ; agrégats (SUM, COUNT, AVG...) encouragés ;",
+      "- joins uniquement via les clés étrangères listées et les chemins de jointure recommandés ;",
+      "- agrégats (SUM, COUNT, AVG...) encouragés ; ILIKE '%...%' pour les noms partiels ;",
       "- pas de point-virgule final ;",
       "- si la question sort du périmètre de la base, réponds directement en texte sans appeler l'outil.",
       "",
       schema.text,
+      buildConfigSection(deps.fileConfig ?? null),
+      buildExamplesBlock(deps.fileConfig ?? null),
     ].join("\n");
 
     const completion = await deps.mistral.chat.complete({

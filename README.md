@@ -65,6 +65,7 @@ npm run typecheck  # vérifie les types sans émettre de fichiers (tsc --noEmit)
 server.ts            # serveur Express : sert public/ + POST /api/chat + POST /api/ask-db (NL2SQL)
 nl2sql.ts            # module NL2SQL générique : schéma pg_catalog, validation SQL, exécution read-only, orchestration LLM
 public/index.html    # interface : chat libre + panneau "Interroger la base"
+nl2sql.config.example.json # exemple de description métier des tables (copiez-le en nl2sql.config.json)
 db/00-roles.sql      # rôle PostgreSQL chatbot_read strictement read-only + base chatbot_demo
 db/01-demo-schema.sql# schéma de démo (enseignants, UE, affectations) + commentaires + données
 scripts/demo-db.ts   # démarre une base Postgres de démo embarquée (npm run demo:db)
@@ -140,6 +141,36 @@ curl -X POST http://localhost:3000/api/ask-db \
 ```
 
 Le schéma exposé au LLM est lu dans `pg_catalog` (tables, colonnes, commentaires
-`COMMENT ON`, clés étrangères) : **documentez vos tables avec `COMMENT ON`** pour
-obtenir de meilleurs SQL. Sans `DATABASE_URL`, `/api/ask-db` renvoie 503 et seul le
-chat libre fonctionne.
+`COMMENT ON`, clés étrangères). **Deux façons de le rendre explicite**, complémentaires :
+
+1. **`COMMENT ON TABLE/COLUMN` dans PostgreSQL** — définition stable des colonnes,
+   voyage avec la base (visible dans `psql` avec `\d+`), lue automatiquement :
+   ```sql
+   COMMENT ON TABLE voeux IS 'Voeux des personnes : une ligne = une personne qui souhaite un enseignement';
+   ```
+2. **Fichier de configuration `nl2sql.config.json`** (copiez `nl2sql.config.example.json`,
+   chemin surchargeable via `NL2SQL_CONFIG`) — pour le **vocabulaire métier**, les
+   **chemins de jointure** et les **exemples question → SQL** (few-shot) :
+   ```json
+   {
+     "databaseDescription": "Gestion des enseignements d'une UFR",
+     "joinPaths": ["voeux.personne_id -> personne.id", "voeux.enseignement_id -> enseignement.id"],
+     "tables": {
+       "voeux": {
+         "description": "Table CENTRALE : une ligne = une personne qui souhaite participer à un enseignement.",
+         "aliases": ["voeux", "souhaits", "demandes"],
+         "joins": ["personne -> voeux via voeux.personne_id, puis voeux -> enseignement via voeux.enseignement_id"]
+       }
+     },
+     "rules": ["Pour relier une personne à ses enseignements, toujours passer par la table voeux."],
+     "examples": [
+       { "question": "À quels enseignements participe cardoso ?",
+         "sql": "SELECT e.* FROM enseignement e JOIN voeux v ON v.enseignement_id = e.id JOIN personne p ON p.id = v.personne_id WHERE p.nom ILIKE '%cardoso%'" }
+     ]
+   }
+   ```
+   C'est typiquement ce qui corrige des jointures erronées : dites au LLM ce que signifie
+   chaque table métier, quelles jointures utiliser, et donnez 2–3 exemples de vos
+   questions habituelles. Réduisez aussi le bruit avec `NL2SQL_ALLOWED_TABLES`.
+
+Sans `DATABASE_URL`, `/api/ask-db` renvoie 503 et seul le chat libre fonctionne.

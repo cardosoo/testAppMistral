@@ -6,6 +6,7 @@ import { Pool } from "pg";
 import {
   contentToText,
   createNl2Sql,
+  loadFileConfig,
   SqlRejectedError,
   type Nl2Sql,
 } from "./nl2sql.js";
@@ -32,9 +33,17 @@ const databaseUrl = process.env.DATABASE_URL;
 let nl2sql: Nl2Sql | null = null;
 if (databaseUrl) {
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+  const fileConfig = loadFileConfig(process.env.NL2SQL_CONFIG ?? "nl2sql.config.json");
+  if (fileConfig) {
+    console.log(
+      `Config NL2SQL chargée : ${Object.keys(fileConfig.tables ?? {}).length} table(s) décrite(s), ` +
+        `${fileConfig.examples?.length ?? 0} exemple(s), ${fileConfig.rules?.length ?? 0} règle(s)`
+    );
+  }
   nl2sql = createNl2Sql({
     mistral: client,
     pool,
+    fileConfig,
     config: {
       databaseUrl,
       schemaName: process.env.NL2SQL_SCHEMA ?? "public",
