@@ -2,6 +2,13 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Mistral } from "@mistralai/mistralai";
+import { Pool } from "pg";
+import {
+  contentToText,
+  createNl2Sql,
+  SqlRejectedError,
+  type Nl2Sql,
+} from "./nl2sql.js";
 
 const MODEL = "mistral-small-latest";
 const PORT = Number(process.env.PORT ?? 3000);
@@ -18,6 +25,29 @@ if (!apiKey) {
 }
 
 const client = new Mistral({ apiKey });
+
+// NL2SQL (optionnel) : actif uniquement si DATABASE_URL pointe vers un rôle
+// PostgreSQL strictement read-only (voir db/ et README).
+const databaseUrl = process.env.DATABASE_URL;
+let nl2sql: Nl2Sql | null = null;
+if (databaseUrl) {
+  const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+  nl2sql = createNl2Sql({
+    mistral: client,
+    pool,
+    config: {
+      databaseUrl,
+      schemaName: process.env.NL2SQL_SCHEMA ?? "public",
+      maxRows: Number(process.env.NL2SQL_MAX_ROWS ?? 200),
+      statementTimeoutMs: Number(process.env.NL2SQL_TIMEOUT_MS ?? 5000),
+      model: process.env.NL2SQL_MODEL ?? MODEL,
+      maxSampleBytes: Number(process.env.NL2SQL_MAX_SAMPLE_BYTES ?? 20000),
+    },
+  });
+  console.log("NL2SQL activé (schéma PostgreSQL interrogable via POST /api/ask-db)");
+} else {
+  console.log("NL2SQL désactivé (DATABASE_URL non défini) — seul POST /api/chat est actif");
+}
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -57,20 +87,6 @@ function sanitizeMessages(input: unknown): ChatMessage[] | null {
   return messages;
 }
 
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((chunk) =>
-        typeof chunk === "object" && chunk !== null && "text" in chunk
-          ? String((chunk as { text?: unknown }).text ?? "")
-          : ""
-      )
-      .join("");
-  }
-  return "";
-}
-
 app.post("/api/chat", async (req, res) => {
   const messages = sanitizeMessages(req.body?.messages);
   if (!messages) {
@@ -88,6 +104,37 @@ app.post("/api/chat", async (req, res) => {
     return res
       .status(502)
       .json({ error: "Échec de l'appel à l'API Mistral." });
+  }
+});
+
+app.post("/api/ask-db", async (req, res) => {
+  const question =
+    typeof req.body?.question === "string" ? req.body.question.trim() : "";
+  if (!question || question.length > 2000) {
+    return res
+      .status(400)
+      .json({ error: "Champ 'question' requis (1 à 2000 caractères)." });
+  }
+  if (!nl2sql) {
+    return res.status(503).json({
+      error:
+        "NL2SQL non configuré : définissez DATABASE_URL (rôle PostgreSQL read-only) dans .env.",
+    });
+  }
+  try {
+    return res.json(await nl2sql.ask(question));
+  } catch (e) {
+    if (e instanceof SqlRejectedError) {
+      console.warn("[nl2sql] SQL refusé :", e.message);
+      return res.status(400).json({
+        error: "La requête générée a été refusée pour des raisons de sécurité.",
+        detail: e.message,
+      });
+    }
+    console.error("[nl2sql] erreur :", e);
+    return res
+      .status(502)
+      .json({ error: "Échec du traitement de la question (LLM ou base indisponible)." });
   }
 });
 
