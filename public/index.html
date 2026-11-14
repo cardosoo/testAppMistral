@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat Mistral + NL2SQL</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f4f4f5;
+      color: #18181b;
+      display: flex;
+      justify-content: center;
+    }
+    main {
+      width: 100%;
+      max-width: 760px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem;
+      gap: 1rem;
+    }
+    h1 { font-size: 1.25rem; margin: 0.5rem 0 0; }
+    h2 { font-size: 1.05rem; margin: 0; }
+    section {
+      background: #fff;
+      border: 1px solid #e4e4e7;
+      border-radius: 0.75rem;
+      padding: 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    #messages {
+      height: 260px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      background: #fafafa;
+      border: 1px solid #ececef;
+      border-radius: 0.5rem;
+    }
+    .msg {
+      max-width: 85%;
+      padding: 0.55rem 0.85rem;
+      border-radius: 0.9rem;
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+    .msg.user { align-self: flex-end; background: #ffd400; border-bottom-right-radius: 0.2rem; }
+    .msg.assistant { align-self: flex-start; background: #e4e4e7; border-bottom-left-radius: 0.2rem; }
+    .msg.error { align-self: center; background: #fee2e2; color: #b91c1c; }
+    form { display: flex; gap: 0.5rem; }
+    input[type="text"] {
+      flex: 1;
+      padding: 0.65rem 0.9rem;
+      border: 1px solid #d4d4d8;
+      border-radius: 0.75rem;
+      font-size: 0.95rem;
+    }
+    button {
+      padding: 0.65rem 1.1rem;
+      border: none;
+      border-radius: 0.75rem;
+      background: #18181b;
+      color: #fff;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #db-answer { white-space: pre-wrap; line-height: 1.45; padding: 0.5rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 0.5rem; }
+    #db-answer.error { background: #fee2e2; border-color: #fecaca; color: #b91c1c; }
+    details { font-size: 0.85rem; }
+    details pre {
+      background: #18181b; color: #e4e4e7; padding: 0.6rem; border-radius: 0.5rem;
+      overflow-x: auto; font-size: 0.78rem;
+    }
+    table { border-collapse: collapse; font-size: 0.8rem; max-width: 100%; overflow-x: auto; display: block; }
+    th, td { border: 1px solid #d4d4d8; padding: 0.3rem 0.5rem; text-align: left; }
+    th { background: #f4f4f5; }
+    .meta { font-size: 0.78rem; color: #52525b; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Chat Mistral (mistral-small-latest) + NL2SQL</h1>
+
+    <section>
+      <h2>💬 Chat libre</h2>
+      <div id="messages"></div>
+      <form id="form">
+        <input id="input" type="text" placeholder="Écrivez votre message…" autocomplete="off" required />
+        <button id="send" type="submit">Envoyer</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>🗄️ Interroger la base (NL2SQL)</h2>
+      <form id="db-form">
+        <input id="db-question" type="text" placeholder="Ex : Quels enseignants ont le plus d'heures ce semestre ?" autocomplete="off" required />
+        <button id="db-send" type="submit">Interroger</button>
+      </form>
+      <div id="db-result" hidden>
+        <div id="db-answer"></div>
+        <details id="db-details">
+          <summary>Requête SQL générée + résultats bruts</summary>
+          <pre id="db-sql"></pre>
+          <div class="meta" id="db-meta"></div>
+          <table id="db-table"></table>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    /* ---------- Chat libre (POST /api/chat) ---------- */
+    const messagesEl = document.getElementById("messages");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const history = [];
+
+    function addMessage(role, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      sendBtn.disabled = true;
+      history.push({ role: "user", content: text });
+      addMessage("user", text);
+      const pending = addMessage("assistant", "…");
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: history }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erreur serveur");
+        pending.textContent = data.reply;
+        history.push({ role: "assistant", content: data.reply });
+      } catch (err) {
+        pending.className = "msg error";
+        pending.textContent = err.message;
+        history.pop();
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    });
+
+    /* ---------- NL2SQL (POST /api/ask-db) ---------- */
+    const dbForm = document.getElementById("db-form");
+    const dbQuestion = document.getElementById("db-question");
+    const dbSend = document.getElementById("db-send");
+    const dbResult = document.getElementById("db-result");
+    const dbAnswer = document.getElementById("db-answer");
+    const dbSql = document.getElementById("db-sql");
+    const dbMeta = document.getElementById("db-meta");
+    const dbTable = document.getElementById("db-table");
+
+    dbForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const question = dbQuestion.value.trim();
+      if (!question) return;
+      dbSend.disabled = true;
+      dbResult.hidden = false;
+      dbAnswer.className = "";
+      dbAnswer.textContent = "Interrogation de la base en cours…";
+      dbTable.innerHTML = "";
+      dbSql.textContent = "";
+      dbMeta.textContent = "";
+      try {
+        const res = await fetch("/api/ask-db", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erreur serveur");
+        dbAnswer.textContent = data.answer;
+        if (data.sql) {
+          dbSql.textContent = data.sql;
+          dbMeta.textContent =
+            `${data.rowCount} ligne(s)${data.truncated ? " (tronqué)" : ""} — ${data.explanation || ""}`;
+          if (data.columns.length && data.rows.length) {
+            const thead = "<tr>" + data.columns.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+            const tbody = data.rows
+              .slice(0, 50)
+              .map((r) => "<tr>" + data.columns.map((c) => `<td>${r[c] ?? ""}</td>`).join("") + "</tr>")
+              .join("");
+            dbTable.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+          }
+        } else {
+          dbSql.textContent = "(aucune requête SQL — réponse directe du modèle)";
+        }
+      } catch (err) {
+        dbAnswer.className = "error";
+        dbAnswer.textContent = err.message;
+      } finally {
+        dbSend.disabled = false;
+        dbQuestion.focus();
+      }
+    });
+  </script>
+</body>
+</html>
