@@ -16,7 +16,7 @@
     }
     main {
       width: 100%;
-      max-width: 760px;
+      max-width: 1040px;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
@@ -35,7 +35,8 @@
       gap: 0.6rem;
     }
     #messages {
-      height: 260px;
+      height: 52vh;
+      min-height: 360px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
@@ -46,7 +47,7 @@
       border-radius: 0.5rem;
     }
     .msg {
-      max-width: 85%;
+      max-width: 88%;
       padding: 0.55rem 0.85rem;
       border-radius: 0.9rem;
       white-space: pre-wrap;
@@ -117,9 +118,26 @@
       return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     }
 
+    function slug(s) {
+      return String(s || "graphique").toLowerCase().normalize("NFD")
+        .replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "graphique";
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+
     // Rendu SVG vanilla d'un ChartSpec { type: bar|line, title, labels, values }
+    // + boutons d'enregistrement local (SVG natif, PNG via canvas).
     function renderChart(chart) {
-      const W = 560, H = 300, padL = 52, padR = 14, padT = 40, padB = 60;
+      const W = 720, H = 340, padL = 52, padR = 14, padT = 40, padB = 60;
       const iw = W - padL - padR, ih = H - padT - padB;
       const vals = chart.values, n = vals.length;
       const maxV = Math.max(...vals, 0), minV = Math.min(0, ...vals);
@@ -152,9 +170,51 @@
         if (i % step !== 0 && i !== n - 1) return;
         parts.push(`<text x="${x(i)}" y="${padT + ih + 14}" text-anchor="end" font-size="9" fill="#52525b" transform="rotate(-25 ${x(i)} ${padT + ih + 14})">${esc(l).slice(0, 12)}</text>`);
       });
+
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("role", "img");
+      svg.style.cssText = "background:#fff;border:1px solid #e4e4e7;border-radius:0.5rem;display:block";
+      svg.innerHTML = parts.join("");
+
       const div = document.createElement("div");
       div.style.marginTop = "0.4rem";
-      div.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:560px;background:#fff;border:1px solid #e4e4e7;border-radius:0.5rem">${parts.join("")}</svg>`;
+      div.appendChild(svg);
+
+      // Boutons d'enregistrement local du graphique
+      const bar = document.createElement("div");
+      bar.style.cssText = "display:flex;gap:0.4rem;margin-top:0.3rem";
+      const mkBtn = (label) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        b.style.cssText = "font-size:0.75rem;padding:0.25rem 0.6rem";
+        return b;
+      };
+      const btnSvg = mkBtn("💾 Télécharger SVG");
+      btnSvg.addEventListener("click", () => {
+        const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml;charset=utf-8" });
+        downloadBlob(blob, slug(chart.title) + ".svg");
+      });
+      const btnPng = mkBtn("💾 Télécharger PNG");
+      btnPng.addEventListener("click", () => {
+        const data = new XMLSerializer().serializeToString(svg);
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = W * 2; // rendu 2x pour la netteté
+          canvas.height = H * 2;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((b) => { if (b) downloadBlob(b, slug(chart.title) + ".png"); }, "image/png");
+        };
+        img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(data);
+      });
+      bar.append(btnSvg, btnPng);
+      div.appendChild(bar);
       return div;
     }
 
