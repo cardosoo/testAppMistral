@@ -42,6 +42,9 @@ if (databaseUrl) {
       statementTimeoutMs: Number(process.env.NL2SQL_TIMEOUT_MS ?? 5000),
       model: process.env.NL2SQL_MODEL ?? MODEL,
       maxSampleBytes: Number(process.env.NL2SQL_MAX_SAMPLE_BYTES ?? 20000),
+      allowedTables: process.env.NL2SQL_ALLOWED_TABLES?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
     },
   });
   console.log("NL2SQL activé (schéma PostgreSQL interrogable via POST /api/ask-db)");

@@ -121,6 +121,14 @@ appliquez votre schéma, puis `GRANT SELECT` à ce rôle, et mettez son URL dans
 | `NL2SQL_TIMEOUT_MS` | `5000` | statement_timeout par requête |
 | `NL2SQL_MODEL` | `mistral-small-latest` | modèle pour SQL + synthèse |
 | `NL2SQL_MAX_SAMPLE_BYTES` | `20000` | taille max du JSON de résultats renvoyé au LLM |
+| `NL2SQL_ALLOWED_TABLES` | toutes les tables du schéma | liste blanche de tables exposées au LLM (séparées par des virgules) |
+
+> `npm run selftest` et `npm run demo:db` chargent aussi `.env` automatiquement
+> (`--env-file-if-exists=.env`) : `DATABASE_URL` peut donc y être défini.
+> Le selftest fonctionne sur n'importe quelle base (démo ou réelle) et n'effectue
+> **aucune écriture persistante** (sonde dans une transaction annulée).
+> Sur votre vraie base, utilisez impérativement un **rôle read-only**
+> (`db/00-roles.sql` en superuser) dans `DATABASE_URL`.
 
 ### Endpoint
 

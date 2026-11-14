@@ -8,8 +8,8 @@
     "dev": "tsx watch --env-file-if-exists=.env server.ts",
     "start": "tsx --env-file-if-exists=.env server.ts",
     "typecheck": "tsc --noEmit",
-    "demo:db": "tsx scripts/demo-db.ts",
-    "selftest": "tsx scripts/selftest.ts"
+    "demo:db": "tsx --env-file-if-exists=.env scripts/demo-db.ts",
+    "selftest": "tsx --env-file-if-exists=.env scripts/selftest.ts"
   },
   "dependencies": {
     "@mistralai/mistralai": "^3.5.0",

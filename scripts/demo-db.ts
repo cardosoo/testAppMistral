@@ -7,7 +7,7 @@
  * Puis configurez .env avec l'URL affichée (DATABASE_URL=...) et lancez `npm run dev`.
  */
 import EmbeddedPostgres from "embedded-postgres";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,8 +23,13 @@ const pg = new EmbeddedPostgres({
   persistent: true,
 });
 
-console.log("Initialisation du cluster PostgreSQL embarqué (dossier .pgdata)...");
-await pg.initialise();
+const dataDir = path.join(root, ".pgdata");
+if (existsSync(path.join(dataDir, "PG_VERSION"))) {
+  console.log("Cluster .pgdata existant réutilisé");
+} else {
+  console.log("Initialisation du cluster PostgreSQL embarqué (dossier .pgdata)...");
+  await pg.initialise();
+}
 await pg.start();
 console.log(`PostgreSQL démarré sur le port ${port}`);
 
