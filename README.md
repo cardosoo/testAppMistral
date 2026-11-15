@@ -224,6 +224,15 @@ Sécurité identique à chaque appel (validation du SQL, read-only, plafonds).
 Coût : l'historique complet est renvoyé à chaque tour (tokens) — le bouton
 « Nouvelle conversation » de l'UI remet l'historique à zéro.
 
+### Markdown rendu dans le chat
+
+Les réponses du modèle (chat et panneau NL2SQL) sont rendues en HTML via
+`public/markdown.js` : **zéro dépendance**, et sûr par construction — le texte
+est d'abord entièrement échappé, puis le markdown est appliqué (titres, gras,
+italique, code inline/blocs, listes, tableaux, citations, liens). Les liens
+`javascript:` sont neutralisés et seules les URL http(s)/mailto/relatives sont
+autorisées. Supporte aussi les tableaux GFM (pratique pour les résultats SQL).
+
 ### Graphiques dans le chat (bloc `​```chart` + rendu SVG)
 
 Le chat peut afficher des graphiques **sans exécuter aucun code** : quand on lui
