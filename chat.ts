@@ -4,7 +4,7 @@ import {
   type AskStep,
   type Nl2Sql,
   type ToolCallLike,
-} from "./nl2sql.js";
+} from "./nl2sql.ts";
 
 /**
  * Chat conversationnel, éventuellement augmenté des outils NL2SQL.

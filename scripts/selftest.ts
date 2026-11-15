@@ -19,8 +19,8 @@ import {
   loadSchemaInfo,
   validateSql,
   SqlRejectedError,
-} from "../nl2sql.js";
-import { parseChartBlock, runChat, sanitizeMessages } from "../chat.js";
+} from "../nl2sql.ts";
+import { parseChartBlock, runChat, sanitizeMessages } from "../chat.ts";
 
 let failures = 0;
 function check(name: string, cond: boolean, extra = ""): void {

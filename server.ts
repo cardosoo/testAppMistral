@@ -12,8 +12,8 @@ import {
   SqlRejectedError,
   type DataSource,
   type Nl2Sql,
-} from "./nl2sql.js";
-import { ChatBadRequestError, runChat } from "./chat.js";
+} from "./nl2sql.ts";
+import { ChatBadRequestError, runChat } from "./chat.ts";
 
 const MODEL = "mistral-small-latest";
 const PORT = Number(process.env.PORT ?? 3000);
