@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat Mistral + NL2SQL</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #f4f4f5;
+      color: #18181b;
+      display: flex;
+      justify-content: center;
+    }
+    main {
+      width: 100%;
+      max-width: 1040px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem;
+      gap: 1rem;
+    }
+    h1 { font-size: 1.25rem; margin: 0.5rem 0 0; }
+    h2 { font-size: 1.05rem; margin: 0; }
+    section {
+      background: #fff;
+      border: 1px solid #e4e4e7;
+      border-radius: 0.75rem;
+      padding: 0.9rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    #messages {
+      height: 52vh;
+      min-height: 360px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      padding: 0.5rem;
+      background: #fafafa;
+      border: 1px solid #ececef;
+      border-radius: 0.5rem;
+    }
+    .msg {
+      max-width: 88%;
+      padding: 0.55rem 0.85rem;
+      border-radius: 0.9rem;
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+    .msg.user { align-self: flex-end; background: #ffd400; border-bottom-right-radius: 0.2rem; }
+    .msg.assistant { align-self: flex-start; background: #e4e4e7; border-bottom-left-radius: 0.2rem; }
+    .msg.error { align-self: center; background: #fee2e2; color: #b91c1c; }
+    form { display: flex; gap: 0.5rem; }
+    input[type="text"] {
+      flex: 1;
+      padding: 0.65rem 0.9rem;
+      border: 1px solid #d4d4d8;
+      border-radius: 0.75rem;
+      font-size: 0.95rem;
+    }
+    button {
+      padding: 0.65rem 1.1rem;
+      border: none;
+      border-radius: 0.75rem;
+      background: #18181b;
+      color: #fff;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #db-answer { white-space: pre-wrap; line-height: 1.45; padding: 0.5rem; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 0.5rem; }
+    #db-answer.error { background: #fee2e2; border-color: #fecaca; color: #b91c1c; }
+    details { font-size: 0.85rem; }
+    details pre {
+      background: #18181b; color: #e4e4e7; padding: 0.6rem; border-radius: 0.5rem;
+      overflow-x: auto; font-size: 0.78rem;
+    }
+    table { border-collapse: collapse; font-size: 0.8rem; max-width: 100%; overflow-x: auto; display: block; }
+    th, td { border: 1px solid #d4d4d8; padding: 0.3rem 0.5rem; text-align: left; }
+    th { background: #f4f4f5; }
+    .meta { font-size: 0.78rem; color: #52525b; }
+    /* markdown rendu dans les bulles et réponses */
+    .msg p, #db-answer p { margin: 0.3rem 0; }
+    .msg h3, .msg h4, .msg h5, .msg h6, #db-answer h3, #db-answer h4 { margin: 0.5rem 0 0.2rem; }
+    .msg code, #db-answer code { background: #18181b; color: #e4e4e7; border-radius: 0.3rem; padding: 0.1rem 0.35rem; font-size: 0.82em; }
+    .msg pre code, #db-answer pre code { background: none; padding: 0; }
+    .msg ul, .msg ol, #db-answer ul, #db-answer ol { margin: 0.3rem 0; padding-left: 1.3rem; }
+    .msg a, #db-answer a { color: #4f46e5; }
+    .msg table, #db-answer table { border-collapse: collapse; font-size: 0.85rem; margin: 0.4rem 0; }
+    .msg blockquote, #db-answer blockquote { margin: 0.4rem 0; }
+    .msg hr, #db-answer hr { border: none; border-top: 1px solid #d4d4d8; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Chat Mistral (mistral-small-latest) + NL2SQL</h1>
+
+    <section>
+      <h2>💬 Chat <button id="reset" type="button" style="float:right;font-size:0.75rem;padding:0.25rem 0.6rem;">Nouvelle conversation</button></h2>
+      <div id="messages"></div>
+      <form id="form">
+        <input id="input" type="text" placeholder="Écrivez votre message… (le chat peut interroger les bases si elles sont configurées)" autocomplete="off" required />
+        <button id="send" type="submit">Envoyer</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>🗄️ Interroger la base (NL2SQL)</h2>
+      <form id="db-form">
+        <input id="db-question" type="text" placeholder="Ex : Quels enseignants ont le plus d'heures ce semestre ?" autocomplete="off" required />
+        <button id="db-send" type="submit">Interroger</button>
+      </form>
+      <div id="db-result" hidden>
+        <div id="db-answer"></div>
+        <div id="db-steps"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/markdown.js"></script>
+  <script>
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function slug(s) {
+      return String(s || "graphique").toLowerCase().normalize("NFD")
+        .replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "graphique";
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    }
+
+    // Rendu SVG vanilla d'un ChartSpec { type, orientation, title, labels, values, color, colors }
+    // + boutons d'enregistrement local (SVG natif, PNG via canvas).
+    function renderChart(chart) {
+      const horizontal = chart.type === "bar" && chart.orientation === "horizontal";
+      const vals = chart.values, n = vals.length;
+      const W = 720;
+      const H = horizontal ? Math.max(300, 70 + n * 36) : 340;
+      const padT = 40, padB = horizontal ? 34 : 60;
+      const padL = horizontal ? 170 : 52, padR = horizontal ? 70 : 14;
+      const iw = W - padL - padR, ih = H - padT - padB;
+      const maxV = Math.max(...vals, 0), minV = Math.min(0, ...vals);
+      const span = maxV - minV || 1;
+      const colorOf = (i) =>
+        (chart.colors && chart.colors.length ? chart.colors[i % chart.colors.length] : chart.color) || "#4f46e5";
+      const parts = [];
+      if (chart.title) parts.push(`<text x="${W / 2}" y="22" text-anchor="middle" font-size="14" font-weight="600">${esc(chart.title)}</text>`);
+
+      if (horizontal) {
+        // Histogramme horizontal : catégories en Y (gauche), valeurs en X (bas)
+        const x = (v) => padL + iw * (v - minV) / span;
+        const y = (i) => padT + ih * (i + 0.5) / n;
+        const bh = Math.max(3, (ih / n) * 0.7);
+        const xZero = x(0);
+        parts.push(`<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        parts.push(`<line x1="${padL}" y1="${padT + ih}" x2="${padL + iw}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        for (let t = 0; t <= 4; t++) {
+          const v = minV + (span * t) / 4, xx = x(v);
+          parts.push(`<line x1="${xx}" y1="${padT}" x2="${xx}" y2="${padT + ih}" stroke="#f0f0f2"/>`);
+          parts.push(`<text x="${xx}" y="${padT + ih + 16}" text-anchor="middle" font-size="10" fill="#52525b">${Math.round(v * 100) / 100}</text>`);
+        }
+        vals.forEach((v, i) => {
+          const yy = y(i) - bh / 2;
+          const xx = Math.min(xZero, x(v)), w = Math.abs(x(v) - xZero);
+          parts.push(`<rect x="${xx}" y="${yy}" width="${w}" height="${bh}" fill="${colorOf(i)}"><title>${esc(chart.labels[i])}: ${v}</title></rect>`);
+          parts.push(`<text x="${padL - 6}" y="${y(i) + 4}" text-anchor="end" font-size="10" fill="#52525b">${esc(chart.labels[i]).slice(0, 22)}</text>`);
+          parts.push(`<text x="${Math.max(xZero, x(v)) + 5}" y="${y(i) + 4}" font-size="10" fill="#52525b">${v}</text>`);
+        });
+      } else {
+        // Vertical : catégories en X (bas), valeurs en Y (gauche)
+        const x = (i) => padL + (iw * (i + 0.5)) / n;
+        const y = (v) => padT + ih * (1 - (v - minV) / span);
+        parts.push(`<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        parts.push(`<line x1="${padL}" y1="${padT + ih}" x2="${padL + iw}" y2="${padT + ih}" stroke="#a1a1aa"/>`);
+        for (let t = 0; t <= 4; t++) {
+          const v = minV + (span * t) / 4, yy = y(v);
+          parts.push(`<line x1="${padL}" y1="${yy}" x2="${padL + iw}" y2="${yy}" stroke="#f0f0f2"/>`);
+          parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#52525b">${Math.round(v * 100) / 100}</text>`);
+        }
+        if (chart.type === "bar") {
+          const bw = Math.max(2, (iw / n) * 0.7);
+          vals.forEach((v, i) => {
+            const top = y(Math.max(v, 0)), h = Math.abs(y(v) - y(0));
+            parts.push(`<rect x="${x(i) - bw / 2}" y="${top}" width="${bw}" height="${h}" fill="${colorOf(i)}"><title>${esc(chart.labels[i])}: ${v}</title></rect>`);
+            if (n <= 20) parts.push(`<text x="${x(i)}" y="${top - 4}" text-anchor="middle" font-size="9" fill="#52525b">${v}</text>`);
+          });
+        } else {
+          const pts = vals.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+          const c = colorOf(0);
+          parts.push(`<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2"/>`);
+          vals.forEach((v, i) => parts.push(`<circle cx="${x(i)}" cy="${y(v)}" r="3" fill="${c}"><title>${esc(chart.labels[i])}: ${v}</title></circle>`));
+        }
+        const step = Math.ceil(n / 12);
+        chart.labels.forEach((l, i) => {
+          if (i % step !== 0 && i !== n - 1) return;
+          parts.push(`<text x="${x(i)}" y="${padT + ih + 14}" text-anchor="end" font-size="9" fill="#52525b" transform="rotate(-25 ${x(i)} ${padT + ih + 14})">${esc(l).slice(0, 12)}</text>`);
+        });
+      }
+
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("role", "img");
+      svg.style.cssText = "background:#fff;border:1px solid #e4e4e7;border-radius:0.5rem;display:block";
+      svg.innerHTML = parts.join("");
+
+      const div = document.createElement("div");
+      div.style.marginTop = "0.4rem";
+      div.appendChild(svg);
+
+      // Boutons d'enregistrement local du graphique
+      const bar = document.createElement("div");
+      bar.style.cssText = "display:flex;gap:0.4rem;margin-top:0.3rem";
+      const mkBtn = (label) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = label;
+        b.style.cssText = "font-size:0.75rem;padding:0.25rem 0.6rem";
+        return b;
+      };
+      const btnSvg = mkBtn("💾 Télécharger SVG");
+      btnSvg.addEventListener("click", () => {
+        const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml;charset=utf-8" });
+        downloadBlob(blob, slug(chart.title) + ".svg");
+      });
+      const btnPng = mkBtn("💾 Télécharger PNG");
+      btnPng.addEventListener("click", () => {
+        const data = new XMLSerializer().serializeToString(svg);
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = W * 2; // rendu 2x pour la netteté
+          canvas.height = H * 2;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((b) => { if (b) downloadBlob(b, slug(chart.title) + ".png"); }, "image/png");
+        };
+        img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(data);
+      });
+      bar.append(btnSvg, btnPng);
+      div.appendChild(bar);
+      return div;
+    }
+
+    /* ---------- Chat contextuel (POST /api/chat, outils NL2SQL si configurés) ---------- */
+    const messagesEl = document.getElementById("messages");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const resetBtn = document.getElementById("reset");
+    const history = []; // historique complet : user, assistant (avec toolCalls), tool
+
+    function addMessage(role, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return div;
+    }
+
+    function renderSteps(steps) {
+      const det = document.createElement("details");
+      det.style.marginTop = "0.4rem";
+      const sum = document.createElement("summary");
+      sum.textContent = `🗄️ ${steps.length} requête(s) exécutée(s) pendant ce tour`;
+      det.appendChild(sum);
+      steps.forEach((s, i) => {
+        const d = document.createElement("details");
+        const s2 = document.createElement("summary");
+        s2.textContent = `Étape ${i + 1} — source « ${s.database} »${s.error ? " ⚠️ " + s.error : ""}`;
+        d.appendChild(s2);
+        const pre = document.createElement("pre");
+        pre.style.cssText = "background:#18181b;color:#e4e4e7;padding:0.4rem;border-radius:0.4rem;overflow-x:auto;font-size:0.72rem;";
+        pre.textContent = s.sql;
+        d.appendChild(pre);
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = s.error
+          ? s.error
+          : `${s.rowCount} ligne(s)${s.truncated ? " (tronqué)" : ""}${s.explanation ? " — " + s.explanation : ""}`;
+        d.appendChild(meta);
+        if (!s.error && s.columns.length && s.rows.length) {
+          const table = document.createElement("table");
+          const thead = "<tr>" + s.columns.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+          const tbody = s.rows
+            .slice(0, 30)
+            .map((r) => "<tr>" + s.columns.map((c) => `<td>${r[c] ?? ""}</td>`).join("") + "</tr>")
+            .join("");
+          table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+          d.appendChild(table);
+        }
+        det.appendChild(d);
+      });
+      return det;
+    }
+
+    resetBtn.addEventListener("click", () => {
+      history.length = 0;
+      messagesEl.innerHTML = "";
+      input.focus();
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      sendBtn.disabled = true;
+      history.push({ role: "user", content: text });
+      addMessage("user", text);
+      const pending = addMessage("assistant", "…");
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: history }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erreur serveur");
+        pending.innerHTML = mdToHtml(data.reply || "(réponse vide)");
+        if (data.chart) pending.appendChild(renderChart(data.chart));
+        if (Array.isArray(data.steps) && data.steps.length) pending.appendChild(renderSteps(data.steps));
+        // On rejoue dans l'historique les messages générés côté serveur (toolCalls, tool, réponse)
+        // pour que le prochain tour ait le contexte complet, y compris les résultats des requêtes.
+        if (Array.isArray(data.append) && data.append.length) history.push(...data.append);
+        else history.push({ role: "assistant", content: data.reply });
+      } catch (err) {
+        pending.className = "msg error";
+        pending.textContent = err.message;
+        history.pop();
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    });
+
+    /* ---------- NL2SQL (POST /api/ask-db) ---------- */
+    const dbForm = document.getElementById("db-form");
+    const dbQuestion = document.getElementById("db-question");
+    const dbSend = document.getElementById("db-send");
+    const dbResult = document.getElementById("db-result");
+    const dbAnswer = document.getElementById("db-answer");
+    const dbSteps = document.getElementById("db-steps");
+
+    function renderStepTable(step) {
+      if (!step.columns.length || !step.rows.length) return null;
+      const table = document.createElement("table");
+      const thead = "<tr>" + step.columns.map((c) => `<th>${c}</th>`).join("") + "</tr>";
+      const tbody = step.rows
+        .slice(0, 50)
+        .map((r) => "<tr>" + step.columns.map((c) => `<td>${r[c] ?? ""}</td>`).join("") + "</tr>")
+        .join("");
+      table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+      return table;
+    }
+
+    dbForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const question = dbQuestion.value.trim();
+      if (!question) return;
+      dbSend.disabled = true;
+      dbResult.hidden = false;
+      dbAnswer.className = "";
+      dbAnswer.textContent = "Interrogation des bases en cours…";
+      dbSteps.innerHTML = "";
+      try {
+        const res = await fetch("/api/ask-db", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Erreur serveur");
+        dbAnswer.innerHTML = mdToHtml(data.answer);
+        for (const [i, step] of (data.steps || []).entries()) {
+          const d = document.createElement("details");
+          const sum = document.createElement("summary");
+          sum.textContent = `Étape ${i + 1} — source « ${step.database} »${step.error ? " ⚠️ " + step.error : ""}`;
+          d.appendChild(sum);
+          const pre = document.createElement("pre");
+          pre.textContent = step.sql;
+          d.appendChild(pre);
+          const meta = document.createElement("div");
+          meta.className = "meta";
+          meta.textContent = step.error
+            ? step.error
+            : `${step.rowCount} ligne(s)${step.truncated ? " (tronqué)" : ""}${step.explanation ? " — " + step.explanation : ""}`;
+          d.appendChild(meta);
+          const table = renderStepTable(step);
+          if (table) d.appendChild(table);
+          dbSteps.appendChild(d);
+        }
+        if (!data.steps || data.steps.length === 0) {
+          const p = document.createElement("div");
+          p.className = "meta";
+          p.textContent = "(aucune requête SQL — réponse directe du modèle)";
+          dbSteps.appendChild(p);
+        }
+      } catch (err) {
+        dbAnswer.className = "error";
+        dbAnswer.textContent = err.message;
+      } finally {
+        dbSend.disabled = false;
+        dbQuestion.focus();
+      }
+    });
+  </script>
+</body>
+</html>

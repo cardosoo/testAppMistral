@@ -1,0 +1,66 @@
+{
+  "databaseDescription": "Application de gestion des enseignements d'une UFR. Deux sources : PostgreSQL (données de l'UFR : personnes, voeux, enseignements) et SQLite structure.sqlite3 (référentiel de l'établissement : licences, parcours, catalogue des UE).",
+  "joinPaths": [
+    "voeux.personne_id -> personne.id",
+    "voeux.enseignement_id -> enseignement.id",
+    "enseignement.ue_id -> ue.id"
+  ],
+  "tables": {
+    "voeux": {
+      "description": "Voeux (souhaits) des personnes : UNE LIGNE = une personne qui souhaite participer à un enseignement. Table CENTRALE (PostgreSQL) pour relier une personne à ses enseignements.",
+      "aliases": ["voeux", "souhaits", "demandes", "wishlist"],
+      "columns": {
+        "personne_id": "personne exprimant le voeu",
+        "enseignement_id": "enseignement concerné par le voeu"
+      },
+      "joins": [
+        "personne -> voeux via voeux.personne_id, puis voeux -> enseignement via voeux.enseignement_id"
+      ]
+    }
+  },
+  "sources": {
+    "postgres": {
+      "description": "Données opérationnelles de l'UFR (personnes, voeux, UE, affectations...).",
+      "tables": {
+        "ue": { "description": "UE proposées par l'UFR ; ue.code correspond à ue_structure.code côté SQLite (pont entre les deux bases)." }
+      }
+    },
+    "sqlite": {
+      "description": "Référentiel de l'établissement (structure.sqlite3) : licences, parcours, catalogue des UE. SQLite n'a pas de commentaires de colonnes : tout décrire ici.",
+      "tables": {
+        "licence": { "description": "Licences de l'établissement", "columns": { "code": "code licence, ex: L1-INFO" } },
+        "ue_structure": {
+          "description": "Catalogue des UE de l'établissement rattachées à une licence",
+          "columns": {
+            "code": "code UE (ex: INF101) — PONT avec ue.code côté PostgreSQL",
+            "licence_id": "licence de rattachement"
+          }
+        }
+      },
+      "rules": [
+        "Pour croiser les deux bases : d'abord récupérer les codes UE côté sqlite (structure), puis filtrer côté postgres avec ces codes (ex: WHERE ue.code IN (...))."
+      ]
+    }
+  },
+  "rules": [
+    "Pour toute question reliant une personne à ses enseignements (postgres), passer par la table voeux.",
+    "Utiliser ILIKE '%...%' (PostgreSQL) / LIKE '%...%' (SQLite) pour les recherches de noms partiels."
+  ],
+  "examples": [
+    {
+      "question": "À quels enseignements participe cardoso ?",
+      "database": "postgres",
+      "sql": "SELECT e.id, e.intitule FROM enseignement e JOIN voeux v ON v.enseignement_id = e.id JOIN personne p ON p.id = v.personne_id WHERE p.nom ILIKE '%cardoso%'"
+    },
+    {
+      "question": "Quelles UE du catalogue (sqlite) ont des voeux (postgres) ?",
+      "database": "sqlite",
+      "sql": "SELECT DISTINCT code, intitule, semestre FROM ue_structure ORDER BY code"
+    },
+    {
+      "question": "Quels voeux concernent les UE de la licence L1-INFO ?",
+      "database": "postgres",
+      "sql": "SELECT v.*, ue.code FROM voeux v JOIN enseignement en ON en.id = v.enseignement_id JOIN ue ON ue.id = en.ue_id WHERE ue.code IN ('INF101','MAT101','PHY101')"
+    }
+  ]
+}
