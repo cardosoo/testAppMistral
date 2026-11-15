@@ -9,7 +9,7 @@
  * AUCUNE écriture persistante : sondes dans des transactions annulées (PG)
  * ou sur une connexion readOnly (SQLite).
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { Pool } from "pg";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -256,6 +256,29 @@ if (sqlitePath && existsSync(sqlitePath)) {
   check("sanitizeMessages supprime un message tool orphelin", sanitizeMessages([{ role: "tool", content: "x", toolCallId: "zzz" }, { role: "user", content: "a" }])?.some((m) => m.role === "tool") === false);
   check("sanitizeMessages refuse un rôle inconnu", sanitizeMessages([{ role: "hacker", content: "a" }]) === null);
   check("sanitizeMessages refuse un corps invalide", sanitizeMessages("pas un tableau") === null && sanitizeMessages([]) === null);
+}
+
+/* ---------------- Rendu markdown (public/markdown.js, fonction pure) ---------------- */
+{
+  console.log(`\n--- Rendu markdown (public/markdown.js) ---`);
+  const mdSrc = readFileSync(new URL("../public/markdown.js", import.meta.url), "utf8");
+  const mdToHtml = new Function(`${mdSrc}; return mdToHtml;`)() as (s: string) => string;
+  check("md : gras", mdToHtml("**gras**").includes("<strong>gras</strong>"));
+  check("md : italique", mdToHtml("*ital*").includes("<em>ital</em>"));
+  check("md : code inline", mdToHtml("`SELECT 1`").includes("<code>SELECT 1</code>"));
+  const codeBlock = mdToHtml("```html\n<b>x</b>\n```");
+  check("md : bloc code échappé", codeBlock.includes("&lt;b&gt;") && !codeBlock.includes("<b>x</b>"));
+  check("md : liste à puces", mdToHtml("- a\n- b").includes("<ul") && mdToHtml("- a\n- b").includes("<li>a</li>"));
+  check("md : liste ordonnée", mdToHtml("1. a\n2. b").includes("<ol") && mdToHtml("1. a\n2. b").includes("<li>b</li>"));
+  check("md : lien http autorisé", mdToHtml("[site](https://example.com)").includes('href="https://example.com"'));
+  check("md : lien javascript: neutralisé", !mdToHtml("[x](javascript:alert(1))").includes("href"));
+  check("md : HTML brut échappé (anti-XSS)", !mdToHtml("<script>alert(1)</script>").includes("<script>"));
+  check("md : <img> brut échappé", !mdToHtml('<img src=x onerror=alert(1)>').includes("<img"));
+  const tbl = mdToHtml("| nom | heures |\n|---|---|\n| Dupont | 30 |");
+  check("md : tableau", tbl.includes("<table") && tbl.includes("<th") && tbl.includes("<td") && tbl.includes("Dupont</td>"));
+  check("md : paragraphe avec saut de ligne", mdToHtml("ligne1\nligne2").includes("ligne1<br>ligne2"));
+  check("md : titre", mdToHtml("## Titre").includes("<h4"));
+  check("md : citation", mdToHtml("> note").includes("<blockquote"));
 }
 
 console.log(failures === 0 ? "\n✅ TOUS LES TESTS PASSENT" : `\n❌ ${failures} ÉCHEC(S)`);
